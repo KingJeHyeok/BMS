@@ -10,7 +10,7 @@
 기준선: 마지막 휴지 전압 하나 → 학습 셀 전체를 합친 단조(isotonic) OCV 곡선.
 """
 import numpy as np
-from sklearn.isotonic import IsotonicRegression
+from xgboost import XGBRegressor
 
 
 class Estimator:
@@ -23,10 +23,17 @@ class Estimator:
         self.soc = train["soc"]
         return self
 
+    @staticmethod
+    def feats(v):
+        r = v.shape[1]
+        end = v[:, -5:].mean(1)
+        return np.c_[end, end - v[:, r // 2], end - v[:, 9]]
+
     def predict(self, test):
         v = test["rest_V"]
         r = v.shape[1]
         ok = self.rest_len >= r
-        x = self.rest_V[ok, r - 1]
-        iso = IsotonicRegression(y_min=0, y_max=1, increasing=True, out_of_bounds="clip").fit(x, self.soc[ok])
-        return iso.predict(v[:, -1])
+        m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8,
+                         monotone_constraints="(1,0,0)", random_state=self.seed)
+        m.fit(self.feats(self.rest_V[ok, :r]), self.soc[ok])
+        return np.clip(m.predict(self.feats(v)), 0, 1)

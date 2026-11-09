@@ -29,14 +29,16 @@ class Estimator:
     def feats(v):
         r = v.shape[1]
         end = v[:, -5:].mean(1)
-        return np.c_[end, end - v[:, r // 2], end - v[:, 9]]
+        idx = sorted({9, min(29, r - 6), min(59, r - 6), r // 2})
+        return np.c_[end, end[:, None] - v[:, idx]]
 
     def predict(self, test):
         v = test["rest_V"]
         r = v.shape[1]
         ok = self.rest_len >= r
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(1,0,0)", random_state=self.seed)
+                         monotone_constraints="(1" + ",0" * (self.feats(v[:1]).shape[1] - 1) + ")",
+                         random_state=self.seed)
         g = np.random.default_rng(self.seed)
         x, K = self.rest_V[ok, :r], 8
         n = len(x)

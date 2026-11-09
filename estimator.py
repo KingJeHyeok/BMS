@@ -10,6 +10,7 @@
 기준선: 마지막 휴지 전압 하나 → 학습 셀 전체를 합친 단조(isotonic) OCV 곡선.
 """
 import numpy as np
+from sklearn.linear_model import LogisticRegression
 from xgboost import XGBRegressor
 
 LSB = 3.3 / 4096 * (115 / 15)  # 일반 저가 체인 가정: 12 bit ADC + 100k/15k 분압
@@ -47,5 +48,15 @@ class Estimator:
         aug = [np.round(a / LSB) * LSB for a in aug]
         ds = self.dataset[ok]
         w = np.array([1.0 / (ds == d).sum() for d in ds])  # 데이터셋마다 같은 총 가중치
-        m.fit(self.feats(np.vstack(aug)), np.tile(self.soc[ok], K), sample_weight=np.tile(w / w.mean(), K))
-        return np.clip(m.predict(self.feats(v)), 0, 1)
+        F, Y = self.feats(np.vstack(aug)), np.tile(self.soc[ok], K)
+        D, W = np.tile(ds, K), np.tile(w / w.mean(), K)
+        m.fit(F, Y, sample_weight=W)
+        # 데이터셋별 전문가 + 전류 불변 형태(로그 비율 Δt/Δ9) 게이트
+        doms = np.unique(ds)
+        ex = [XGBRegressor(**m.get_params()).fit(F[D == d], Y[D == d]) for d in doms]
+        gx = lambda A: np.log((np.maximum(A[:, 2:], 0) + LSB) / (np.maximum(A[:, 1:2], 0) + LSB))  # noqa: E731
+        gate = LogisticRegression(C=0.1, max_iter=1000).fit(gx(F), D, sample_weight=W)
+        Ft = self.feats(v)
+        P = gate.predict_proba(gx(Ft))
+        moe = sum(P[:, k] * e.predict(Ft) for k, e in enumerate(ex))
+        return np.clip(0.5 * m.predict(Ft) + 0.5 * moe, 0, 1)

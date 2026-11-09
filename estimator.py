@@ -12,7 +12,6 @@
 import numpy as np
 from xgboost import XGBRegressor
 
-LSB = 3.3 / 4096 * (115 / 15)  # 일반 저가 체인 가정: 12 bit ADC + 100k/15k 분압
 
 class Estimator:
     def __init__(self, seed=0):

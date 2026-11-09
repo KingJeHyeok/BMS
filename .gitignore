@@ -1,0 +1,6 @@
+data/
+results.tsv
+__pycache__/
+.claude/session_start.txt
+.claude/settings.local.json
+STOP

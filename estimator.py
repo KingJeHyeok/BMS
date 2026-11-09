@@ -10,7 +10,6 @@
 기준선: 마지막 휴지 전압 하나 → 학습 셀 전체를 합친 단조(isotonic) OCV 곡선.
 """
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 from xgboost import XGBRegressor
 
 LSB = 3.3 / 4096 * (115 / 15)  # 일반 저가 체인 가정: 12 bit ADC + 100k/15k 분압
@@ -24,6 +23,7 @@ class Estimator:
         self.rest_len = train["rest_len"]
         self.soc = train["soc"]
         self.dataset = train["dataset"]
+        self._models = {}
         return self
 
     @staticmethod
@@ -37,9 +37,15 @@ class Estimator:
     def predict(self, test):
         v = test["rest_V"]
         r = v.shape[1]
+        if r not in self._models:  # 창 길이 r마다 한 번만 학습 (서버에서 예측 1건 100 ms 제약)
+            self._models[r] = self._train(r)
+        return np.clip(self._models[r].predict(self.feats(v)), 0, 1)
+
+    def _train(self, r):
         ok = self.rest_len >= r
+        nf = self.feats(self.rest_V[:1, :r]).shape[1]
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(1" + ",1" * (self.feats(v[:1]).shape[1] - 1) + ")",  # 남은 이완↑ → OCV↑
+                         monotone_constraints="(" + ",".join(["1"] * nf) + ")",  # 끝 전압↑·남은 이완↑ → SOC↑
                          random_state=self.seed)
         g = np.random.default_rng(self.seed)
         x, K = self.rest_V[ok, :r], 8
@@ -61,7 +67,5 @@ class Estimator:
         aug = [np.round(a / q) * q for a, q in zip(aug, g.uniform(0.003, 0.012, K))]
         ds = self.dataset[ok]
         w = np.array([1.0 / (ds == d).sum() for d in ds])  # 데이터셋마다 같은 총 가중치
-        F, Y = self.feats(np.vstack(aug)), np.tile(self.soc[ok], K)
-        D, W = np.tile(ds, K), np.tile(w / w.mean(), K)
-        m.fit(F, Y, sample_weight=W)
-        return np.clip(m.predict(self.feats(v)), 0, 1)
+        m.fit(self.feats(np.vstack(aug)), np.tile(self.soc[ok], K), sample_weight=np.tile(w / w.mean(), K))
+        return m

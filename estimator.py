@@ -35,7 +35,7 @@ class Estimator:
         v = test["rest_V"]
         r = v.shape[1]
         ok = self.rest_len >= r
-        m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8,
+        m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
                          monotone_constraints="(1,0,0)", random_state=self.seed)
         g = np.random.default_rng(self.seed)
         x, K = self.rest_V[ok, :r], 8

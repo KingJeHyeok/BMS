@@ -32,7 +32,9 @@ def temp_from(s):
 
 def read_mat(p):
     m = sio.loadmat(p, squeeze_me=True, struct_as_record=False)["meas"]
-    return pd.DataFrame({"t": m.Time.astype(float), "V": m.Voltage.astype(float), "I": m.Current.astype(float)})
+    # 원본 로그에 긴 공백이 있어 직접 적분하면 Ah가 빠진다(Panasonic HPPC 25 °C: 1.34 vs 2.77 Ah). 장비 Ah를 쓴다.
+    return pd.DataFrame({"t": m.Time.astype(float), "V": m.Voltage.astype(float), "I": m.Current.astype(float),
+                         "Ah": m.Ah.astype(float)})
 
 
 def read_arbin(p):
@@ -77,7 +79,10 @@ def files(raw):
 def to_1hz(df, t0):
     t = df.t.to_numpy() - t0
     I = df.I.to_numpy()
-    ah = np.r_[0, np.cumsum(np.diff(t) * 0.5 * (I[1:] + I[:-1]))] / 3600
+    if "Ah" in df:
+        ah = df.Ah.to_numpy() - df.Ah.iat[0]
+    else:
+        ah = np.r_[0, np.cumsum(np.diff(t) * 0.5 * (I[1:] + I[:-1]))] / 3600
     g = pd.DataFrame({"sec": np.floor(t).astype(int), "V": df.V.to_numpy(), "I": I, "ah": ah}).groupby("sec").mean()
     g = g.reindex(np.arange(g.index.min(), g.index.max() + 1)).interpolate(limit_direction="both")
     return g
@@ -129,7 +134,9 @@ def samples(job):
 
 def save(path, S):
     np.savez_compressed(path, pre_V=np.stack(S.pre_V), pre_I=np.stack(S.pre_I), rest_V=np.stack(S.rest_V),
-                        meta=S.drop(columns=["pre_V", "pre_I", "rest_V"]).to_records(index=False))
+                        meta=S.drop(columns=["pre_V", "pre_I", "rest_V"]).to_records(
+                            index=False, column_dtypes={c: "U96" for c in S.columns if S[c].dtype == object
+                                                        and c not in ("pre_V", "pre_I", "rest_V")}))
 
 
 def main():

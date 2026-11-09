@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(./estimator.py)",
+      "Edit(./CHANGELOG.md)",
+      "Edit(./backlog.md)",
+      "Bash(python -I eval/run.py:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset --hard HEAD~1)",
+      "Bash(git show:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(tail:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [
+      "Edit(./eval/**)",
+      "Write(./eval/**)",
+      "Edit(./data/**)",
+      "Write(./data/**)",
+      "Edit(./program.md)",
+      "Write(./program.md)",
+      "Edit(./results.tsv)",
+      "Write(./results.tsv)",
+      "Edit(./.claude/**)",
+      "Write(./.claude/**)",
+      "Read(//c/BMS/data/holdout/**)",
+      "Bash(git push:*)",
+      "Bash(pip:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob",
+        "hooks": [{ "type": "command", "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\"" }]
+      }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/loop.py\"" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/loop.py\"" }] }
+    ]
+  }
+}

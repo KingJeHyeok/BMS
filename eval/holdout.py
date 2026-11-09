@@ -29,11 +29,13 @@ def main():
         tr = np.isin(meta["dataset"], R.FOLDS) & (meta["dataset"] != fold)
         train = {k: v[tr] for k, v in X.items()}
         train.update({c: meta[c][tr] for c in ["dataset", "chem", "cell", "temp_c", "soc", "rest_len"]})
-        model = est.Estimator(seed=0)
-        model.fit(train)
         sel = (hmeta["dataset"] == fold) & (hmeta["rest_len"] >= R.PRIMARY_R)
-        errs = [np.abs(np.clip(model.predict({"rest_V": R.corrupt(H["rest_V"][sel], R.PRIMARY_R, 7000 + s)}), 0, 1)
-                       - hmeta["soc"][sel]) * 100 for s in R.SEEDS]
+        errs = []
+        for es in R.EST_SEEDS:  # run.py와 같이 추정기 시드 평균
+            model = est.Estimator(seed=es)
+            model.fit(train)
+            errs += [np.abs(np.clip(model.predict({"rest_V": R.corrupt(H["rest_V"][sel], R.PRIMARY_R, 7000 + s)}),
+                                    0, 1) - hmeta["soc"][sel]) * 100 for s in R.SEEDS]
         res[fold] = float(np.concatenate(errs).mean())
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=R.ROOT, capture_output=True,
                             text=True).stdout.strip()

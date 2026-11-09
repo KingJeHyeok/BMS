@@ -153,8 +153,8 @@ def main():
             caps[job["cell"]] = max(caps.get(job["cell"], 0), -ahmin)
         rows += s
     S = pd.DataFrame(rows)
-    # 기존 soc_1hz 파이프라인과 같은 기준 용량 (주행 사이클 25 °C 최대 방전 Ah)
-    caps.update({"LG_HG2": 2.593, "PAN_1": 2.799, "INR_SP20-2": 2.055, "A123_007": 1.036, "A123_008": 1.058})
+    # 기준 용량 = 25 °C 컷오프까지 방전한 Ah. LG 주행 사이클은 약 3.2 V에서 멈춰서 25 °C HPPC 값(2.774)을 쓴다
+    caps.update({"LG_HG2": 2.774, "PAN_1": 2.799, "INR_SP20-2": 2.055, "A123_007": 1.036, "A123_008": 1.058})
     print("기준 용량(Ah):", {k: round(v, 3) for k, v in caps.items()})
     # A123 두 셀은 25 °C가 각자 있음. 없는 셀은 같은 데이터셋 최대값
     for c in S.cell.unique():

@@ -4,7 +4,8 @@
   학습 입력: 개발 데이터의 rest_V(깨끗한 값), pre_V, pre_I, 메타(dataset, chem, cell, temp_c), soc
   시험 입력: rest_V의 처음 r초만, 저가 측정 체인 오차를 입힌 값. 메타·온도·pre 구간 없음.
 분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R.
-주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 오차 시드 3개 평균.
+주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 3개 × 오차 시드 3개 평균.
+판정 기준: 가장 최근 baseline 행 이후의 baseline/improved 기록만 비교한다 (지표 정의가 바뀌면 baseline을 다시 찍는다).
 
 사용법 (에이전트): python -I eval/run.py --tag <변경유형> --desc "<한 줄 가설>"
   변경유형: hparam | model | feature | train | other
@@ -26,6 +27,7 @@ FOLDS = ["LG_HG2", "Panasonic_PF", "CALCE_INR20R"]
 RS = [60, 300, 600]
 PRIMARY_R = 300
 SEEDS = [0, 1, 2]
+EST_SEEDS = [0, 1, 2]  # 추정기 시드. 시드 운(약 0.08 %p)이 MIN_GAIN보다 크게 작용하지 않게 평균한다
 MIN_GAIN = 0.05  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV
@@ -61,19 +63,22 @@ def inner():
         tr, te = meta["dataset"] != fold, meta["dataset"] == fold
         train = {k: v[tr] for k, v in X.items()}
         train.update({c: meta[c][tr] for c in ["dataset", "chem", "cell", "temp_c", "soc", "rest_len"]})
-        model = est_mod.Estimator(seed=0)
-        model.fit(train)
+        errs = {r: [] for r in RS}
+        for es in EST_SEEDS:
+            model = est_mod.Estimator(seed=es)
+            model.fit(train)
+            for r in RS:
+                sel = te & (meta["rest_len"] >= r)
+                for s in SEEDS:
+                    v = corrupt(X["rest_V"][sel], r, 1000 * s + r)
+                    pred = np.asarray(model.predict({"rest_V": v}), float)
+                    if pred.shape != (sel.sum(),) or not np.isfinite(pred).all():
+                        raise ValueError(f"predict가 길이 {sel.sum()}의 유한한 배열을 반환해야 함")
+                    errs[r].append(np.abs(np.clip(pred, 0, 1) - meta["soc"][sel]) * 100)
         for r in RS:
-            sel = te & (meta["rest_len"] >= r)
-            errs = []
-            for s in SEEDS:
-                v = corrupt(X["rest_V"][sel], r, 1000 * s + r)
-                pred = np.asarray(model.predict({"rest_V": v}), float)
-                if pred.shape != (sel.sum(),) or not np.isfinite(pred).all():
-                    raise ValueError(f"predict가 길이 {sel.sum()}의 유한한 배열을 반환해야 함")
-                errs.append(np.abs(np.clip(pred, 0, 1) - meta["soc"][sel]) * 100)
-            e = np.concatenate(errs)
-            out[f"{fold}|{r}"] = (float(e.mean()), float(np.percentile(e, 95)), int(sel.sum()))
+            e = np.concatenate(errs[r])
+            n = int((te & (meta["rest_len"] >= r)).sum())
+            out[f"{fold}|{r}"] = (float(e.mean()), float(np.percentile(e, 95)), n)
     print("__RESULT__" + json.dumps(out))
 
 
@@ -82,13 +87,14 @@ def git(*a):
 
 
 def best_in_history(rows):
-    best = None
-    for r in rows:
-        if r["status"] in ("baseline", "improved") and r["commit"] != "dirty":
-            ok = subprocess.run(["git", "merge-base", "--is-ancestor", r["commit"], "HEAD"], cwd=ROOT).returncode == 0
-            if ok and (best is None or float(r["primary_mae"]) < best):
-                best = float(r["primary_mae"])
-    return best
+    """현재 HEAD의 조상 커밋 중, 가장 최근 baseline 행 이후의 baseline/improved 최저값."""
+    def anc(c):
+        return subprocess.run(["git", "merge-base", "--is-ancestor", c, "HEAD"], cwd=ROOT).returncode == 0
+    rows = [r for r in rows if r["status"] in ("baseline", "improved") and r["commit"] != "dirty"
+            and r.get("primary_mae") and anc(r["commit"])]
+    last_base = max((i for i, r in enumerate(rows) if r["status"] == "baseline"), default=0)
+    vals = [float(r["primary_mae"]) for r in rows[last_base:]]
+    return min(vals) if vals else None
 
 
 def main():

@@ -38,13 +38,18 @@ class Estimator:
         r = v.shape[1]
         ok = self.rest_len >= r
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(1" + ",0" * (self.feats(v[:1]).shape[1] - 1) + ")",
+                         monotone_constraints="(1" + ",1" * (self.feats(v[:1]).shape[1] - 1) + ")",  # 남은 이완↑ → OCV↑
                          random_state=self.seed)
         g = np.random.default_rng(self.seed)
         x, K = self.rest_V[ok, :r], 8
         n = len(x)
-        aug = [x * (1 + g.normal(0, 0.003, (n, 1))) + g.normal(0, 0.006, (n, 1)) + g.normal(0, 0.002, x.shape)
-               for _ in range(K)]
+        full = self.rest_V[ok]
+        last = np.minimum(self.rest_len[ok], full.shape[1])
+        vinf = np.array([row[l - 5:l].mean() for row, l in zip(full, last)])[:, None]  # 긴 휴지 끝 ≈ OCV
+        # 직전 전류 크기 증강: 과전압 η = vinf − V를 0.5–1.5배
+        aug = [vinf - g.uniform(0.5, 1.5, (n, 1)) * (vinf - x) for _ in range(K)]
+        aug = [a * (1 + g.normal(0, 0.003, (n, 1))) + g.normal(0, 0.006, (n, 1)) + g.normal(0, 0.002, x.shape)
+               for a in aug]
         aug = [np.round(a / LSB) * LSB for a in aug]
         ds = self.dataset[ok]
         w = np.array([1.0 / (ds == d).sum() for d in ds])  # 데이터셋마다 같은 총 가중치

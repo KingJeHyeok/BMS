@@ -29,10 +29,10 @@ class Estimator:
     def feats(v):
         r = v.shape[1]
         end = v[:, -15:].mean(1)
-        idx = sorted({9, min(29, r - 6), min(59, r - 6), r // 2})
+        idx = sorted({4, 9, min(29, r - 6), min(59, r - 6), r // 2})
         pts = np.stack([v[:, max(i - 2, 0):i + 3].mean(1) for i in idx], 1)  # 5점 평균: 양자화·잡음 완화
-        d = end[:, None] - pts  # d[:,0]=Δ9, d[:,-1]=가장 늦은 시점
-        den = np.copysign(np.maximum(np.abs(d[:, 0]), 0.006), d[:, 0])  # 분모 하한 6 mV
+        d = end[:, None] - pts  # d[:,0]=Δ4, d[:,1]=Δ9, d[:,-1]=가장 늦은 시점
+        den = np.copysign(np.maximum(np.abs(d[:, 1]), 0.006), d[:, 1])  # 분모 하한 6 mV
         frac = np.clip(d[:, -1] / den, -0.5, 1.5)  # 늦은 이완 비율: 진폭·부호에 불변 (방전 말단에서 이완이 느림)
         return np.c_[end, d, frac]
 

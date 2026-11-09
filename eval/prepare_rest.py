@@ -48,12 +48,14 @@ def read_arbin(p):
 def files(raw):
     lg = raw / "lg_hg2" / "LG_HG2_Original_Dataset_McMasterUniversity_Jan_2020"
     for p in sorted(lg.glob("*/*.mat")):
-        if "_HPPC_" in p.name or "_PausCycl_" in p.name:
+        # HPPC·PausCycl + 주행 사이클·용량/방전 시험(끝난 뒤 휴지 = 저 SOC 표본). 충전 파일 제외
+        if "Charge" not in p.name:
             yield dict(path=p, reader="mat", dataset="LG_HG2", chem="NMC", vmax=4.2, cell="LG_HG2",
                        temp_c=temp_from(p.parent.name))
     pan = raw / "panasonic_18650pf" / "Panasonic 18650PF Data"
     for p in sorted(pan.glob("*/*/*.mat")):
-        if re.search(r"5pulse_HPPC", p.name, re.I):
+        # 펄스 시험 + 주행 사이클·1C 방전 시험. 충전·EIS·온도 상승(Trise) 시험 제외
+        if not re.search(r"charge|eis|trise", f"{p.parent.parent.name}/{p.parent.name}/{p.name}", re.I):
             yield dict(path=p, reader="mat", dataset="Panasonic_PF", chem="NCA", vmax=4.2, cell="PAN_1",
                        temp_c=temp_from(p.parent.parent.name))
     for p in sorted((raw / "calce_inr18650_20r" / "extracted").glob("SP1_*C_*_OCV_*/*.xls*")):
@@ -109,7 +111,7 @@ def long_charge_before(I, a):
 
 def samples(job):
     df = read_mat(job["path"]) if job["reader"] == "mat" else read_arbin(job["path"])
-    out = []
+    out, ah = [], np.zeros(1)  # 만충 기준점이 없는 파일은 표본 0개 (이전에는 ah 미정의 오류)
     for k, t0 in enumerate(anchor(df, job["vmax"])):
         seg = df[df.t >= t0]
         g = to_1hz(seg, t0)

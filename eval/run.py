@@ -4,7 +4,7 @@
   학습 입력: 개발 데이터의 rest_V(깨끗한 값), pre_V, pre_I, 메타(dataset, chem, cell, temp_c), soc
   시험 입력: rest_V의 처음 r초만, 저가 측정 체인 오차를 입힌 값. 메타·온도·pre 구간 없음.
 분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R.
-주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 3개 × 오차 시드 3개 평균.
+주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 5개 × 오차 시드 3개 평균.
 판정 기준: 가장 최근 baseline 행 이후의 baseline/improved 기록만 비교한다 (지표 정의가 바뀌면 baseline을 다시 찍는다).
 
 사용법 (에이전트): python -I eval/run.py --tag <변경유형> --desc "<한 줄 가설>"
@@ -27,7 +27,7 @@ FOLDS = ["LG_HG2", "Panasonic_PF", "CALCE_INR20R"]
 RS = [60, 300, 600]
 PRIMARY_R = 300
 SEEDS = [0, 1, 2]
-EST_SEEDS = [0, 1, 2]  # 추정기 시드. 시드 운(약 0.08 %p)이 MIN_GAIN보다 크게 작용하지 않게 평균한다
+EST_SEEDS = [0, 1, 2, 3, 4]  # 추정기 시드. 시드 운(약 0.08 %p)이 MIN_GAIN보다 크게 작용하지 않게 평균한다
 MIN_GAIN = 0.05  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV

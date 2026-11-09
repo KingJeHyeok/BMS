@@ -62,7 +62,7 @@ class Estimator:
         s, dsk = self.soc[ok], self.dataset[ok]
         for a in aug:
             for d in np.unique(dsk):
-                c = g.normal(0, 0.022, 2)
+                c = g.normal(0, 0.030, 2)
                 a[dsk == d] += (c[0] * np.sin(np.pi * s[dsk == d]) + c[1] * np.sin(2 * np.pi * s[dsk == d]))[:, None]
         # 하드웨어 불확실성: 체인마다 LSB 3–12 mV, 이득 0.5 %, 오프셋 10 mV, 잡음 1–4 mV (평가기 가정에 맞추지 않음)
         aug = [a * (1 + g.normal(0, 0.005, (n, 1))) + g.normal(0, 0.010, (n, 1))

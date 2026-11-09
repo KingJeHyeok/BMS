@@ -22,6 +22,7 @@ class Estimator:
         self.rest_V = train["rest_V"]
         self.rest_len = train["rest_len"]
         self.soc = train["soc"]
+        self.dataset = train["dataset"]
         return self
 
     @staticmethod
@@ -42,5 +43,7 @@ class Estimator:
         aug = [x * (1 + g.normal(0, 0.003, (n, 1))) + g.normal(0, 0.006, (n, 1)) + g.normal(0, 0.002, x.shape)
                for _ in range(K)]
         aug = [np.round(a / LSB) * LSB for a in aug]
-        m.fit(self.feats(np.vstack(aug)), np.tile(self.soc[ok], K))
+        ds = self.dataset[ok]
+        w = np.array([1.0 / (ds == d).sum() for d in ds])  # 데이터셋마다 같은 총 가중치
+        m.fit(self.feats(np.vstack(aug)), np.tile(self.soc[ok], K), sample_weight=np.tile(w / w.mean(), K))
         return np.clip(m.predict(self.feats(v)), 0, 1)

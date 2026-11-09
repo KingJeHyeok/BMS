@@ -29,7 +29,7 @@ class Estimator:
     @staticmethod
     def feats(v):
         r = v.shape[1]
-        end = v[:, -5:].mean(1)
+        end = v[:, -15:].mean(1)
         idx = sorted({9, min(29, r - 6), min(59, r - 6), r // 2})
         pts = np.stack([v[:, max(i - 2, 0):i + 3].mean(1) for i in idx], 1)  # 5점 평균: 양자화·잡음 완화
         return np.c_[end, end[:, None] - pts]

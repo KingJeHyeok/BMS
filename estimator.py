@@ -48,7 +48,7 @@ class Estimator:
         last = np.minimum(self.rest_len[ok], full.shape[1])
         vinf = np.array([row[l - 5:l].mean() for row, l in zip(full, last)])[:, None]  # 긴 휴지 끝 ≈ OCV
         # 직전 전류 크기 증강: 과전압 η = vinf − V를 0.5–1.5배
-        aug = [vinf - g.uniform(0.5, 1.5, (n, 1)) * (vinf - x) for _ in range(K)]
+        aug = [vinf - np.exp(g.uniform(np.log(0.1), np.log(1.5), (n, 1))) * (vinf - x) for _ in range(K)]  # 저전류까지
         # 하드웨어 불확실성: 체인마다 LSB 3–12 mV, 이득 0.5 %, 오프셋 10 mV, 잡음 1–4 mV (평가기 가정에 맞추지 않음)
         aug = [a * (1 + g.normal(0, 0.005, (n, 1))) + g.normal(0, 0.010, (n, 1))
                + g.normal(0, 1, x.shape) * g.uniform(0.001, 0.004) for a in aug]

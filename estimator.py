@@ -69,6 +69,8 @@ class Estimator:
                + g.normal(0, 1, x.shape) * g.uniform(0.001, 0.004) for a in aug]
         aug = [np.round(a / q) * q for a, q in zip(aug, g.uniform(0.003, 0.012, K))]
         ds = self.dataset[ok]
-        w = np.array([1.0 / (ds == d).sum() for d in ds])  # 데이터셋마다 같은 총 가중치
+        # 데이터셋마다 같은 총 가중치, 그 안에서 SOC 구간(0.1)마다 같은 가중치 (주행 사이클 휴지가 저 SOC에 몰림)
+        sb = np.clip((self.soc[ok] * 10).astype(int), 0, 9)
+        w = np.array([1.0 / ((ds == d) & (sb == b)).sum() / len(set(sb[ds == d])) for d, b in zip(ds, sb)])
         m.fit(self.feats(np.vstack(aug)), np.tile(self.soc[ok], K), sample_weight=np.tile(w / w.mean(), K))
         return m

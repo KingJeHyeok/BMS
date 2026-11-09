@@ -64,12 +64,4 @@ class Estimator:
         F, Y = self.feats(np.vstack(aug)), np.tile(self.soc[ok], K)
         D, W = np.tile(ds, K), np.tile(w / w.mean(), K)
         m.fit(F, Y, sample_weight=W)
-        # 데이터셋별 전문가 + 전류 불변 형태(로그 비율 Δt/Δ9) 게이트
-        doms = np.unique(ds)
-        ex = [XGBRegressor(**m.get_params()).fit(F[D == d], Y[D == d]) for d in doms]
-        gx = lambda A: np.log((np.maximum(A[:, 2:], 0) + LSB) / (np.maximum(A[:, 1:2], 0) + LSB))  # noqa: E731
-        gate = LogisticRegression(C=0.1, max_iter=1000).fit(gx(F), D, sample_weight=W)
-        Ft = self.feats(v)
-        P = gate.predict_proba(gx(Ft))
-        moe = sum(P[:, k] * e.predict(Ft) for k, e in enumerate(ex))
-        return np.clip(0.5 * m.predict(Ft) + 0.5 * moe, 0, 1)
+        return np.clip(m.predict(self.feats(v)), 0, 1)

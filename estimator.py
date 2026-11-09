@@ -32,22 +32,26 @@ class Estimator:
         end = v[:, -15:].mean(1)
         idx = sorted({9, min(29, r - 6), min(59, r - 6), r // 2})
         pts = np.stack([v[:, max(i - 2, 0):i + 3].mean(1) for i in idx], 1)  # 5점 평균: 양자화·잡음 완화
-        return np.c_[end, end[:, None] - pts]
+        d = end[:, None] - pts  # d[:,0]=Δ9, d[:,-1]=가장 늦은 시점
+        den = np.copysign(np.maximum(np.abs(d[:, 0]), 0.006), d[:, 0])  # 분모 하한 6 mV
+        frac = np.clip(d[:, -1] / den, -0.5, 1.5)  # 늦은 이완 비율: 진폭·부호에 불변 (방전 말단에서 이완이 느림)
+        return np.c_[end, d, frac]
 
     def predict(self, test):
         v = test["rest_V"]
         r = v.shape[1]
         if r not in self._models:  # 창 길이 r마다 한 번만 학습 (서버에서 예측 1건 100 ms 제약)
-            self._models[r] = self._train(r)
-        return np.clip(self._models[r].predict(self.feats(v)), 0, 1)
+            self._models[r] = [self._train(r, 3 * self.seed + k) for k in range(3)]  # 증강 난수만 다른 3개 배깅
+        F = self.feats(v)
+        return np.clip(np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)
 
-    def _train(self, r):
+    def _train(self, r, seed):
         ok = self.rest_len >= r
         nf = self.feats(self.rest_V[:1, :r]).shape[1]
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(" + ",".join(["1"] * nf) + ")",  # 끝 전압↑·남은 이완↑ → SOC↑
-                         random_state=self.seed)
-        g = np.random.default_rng(self.seed)
+                         monotone_constraints="(" + ",".join(["1"] * (nf - 1) + ["0"]) + ")",  # 끝 전압·Δ +1, frac 자유
+                         random_state=seed)
+        g = np.random.default_rng(seed)
         x, K = self.rest_V[ok, :r], 8
         n = len(x)
         full = self.rest_V[ok]

@@ -12,6 +12,7 @@
 import numpy as np
 from xgboost import XGBRegressor
 
+LSB = 3.3 / 4096 * (115 / 15)  # 일반 저가 체인 가정: 12 bit ADC + 100k/15k 분압
 
 class Estimator:
     def __init__(self, seed=0):
@@ -35,5 +36,11 @@ class Estimator:
         ok = self.rest_len >= r
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8,
                          monotone_constraints="(1,0,0)", random_state=self.seed)
-        m.fit(self.feats(self.rest_V[ok, :r]), self.soc[ok])
+        g = np.random.default_rng(self.seed)
+        x, K = self.rest_V[ok, :r], 8
+        n = len(x)
+        aug = [x * (1 + g.normal(0, 0.003, (n, 1))) + g.normal(0, 0.006, (n, 1)) + g.normal(0, 0.002, x.shape)
+               for _ in range(K)]
+        aug = [np.round(a / LSB) * LSB for a in aug]
+        m.fit(self.feats(np.vstack(aug)), np.tile(self.soc[ok], K))
         return np.clip(m.predict(self.feats(v)), 0, 1)

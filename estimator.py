@@ -41,7 +41,7 @@ class Estimator:
         v = test["rest_V"]
         r = v.shape[1]
         if r not in self._models:  # 창 길이 r마다 한 번만 학습 (서버에서 예측 1건 100 ms 제약)
-            self._models[r] = [self._train(r, 3 * self.seed + k) for k in range(3)]  # 증강 난수만 다른 3개 배깅
+            self._models[r] = [self._train(r, 5 * self.seed + k) for k in range(5)]  # 증강 난수만 다른 5개 배깅
         F = self.feats(v)
         return np.clip(np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)
 

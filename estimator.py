@@ -78,16 +78,16 @@ class Estimator:
         rk = ref["rest_len"] >= r
         rs = ref_map(self.feats(ref["rest_V"][rk, :r])[:, 0], ref["soc"][rk], self.feats(v)[:, 0])
         Fr, Fv = self.feats(ref["rest_V"][rk, :r]), self.feats(v)
-        F = np.c_[Fv, rs, ref_multi(pts(ref["rest_V"][rk, :r]), ref["soc"][rk], pts(v)) - rs[:, None],
+        F = np.c_[Fv, rs, test["temp_c"], ref_multi(pts(ref["rest_V"][rk, :r]), ref["soc"][rk], pts(v)) - rs[:, None],
                   ref_knn(Fr, ref["soc"][rk], Fv) - rs]
         return np.clip(rs + np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)  # 등록 곡선 SOC + 보정
 
     def _train(self, r, seed):
         ok = self.rest_len >= r
         npt = pts(self.rest_V[:1, :r]).shape[1]
-        nf = self.feats(self.rest_V[:1, :r]).shape[1] + 2 + pts(self.rest_V[:1, :r]).shape[1]
+        nf = self.feats(self.rest_V[:1, :r]).shape[1] + 3 + pts(self.rest_V[:1, :r]).shape[1]
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(" + ",".join(["1"] * (nf - 3 - npt) + ["0", "0"] + ["0"] * (npt + 1)) + ")",  # 끝 전압·Δ +1, 나머지 자유
+                         monotone_constraints="(" + ",".join(["1"] * (nf - 4 - npt) + ["0", "0", "0"] + ["0"] * (npt + 1)) + ")",  # 끝 전압·Δ +1, 나머지 자유
                          random_state=seed)
         g = np.random.default_rng(seed)
         x, K = self.rest_V[ok, :r], 6  # 11-10 사용자 결정: 8→6 (평가 시간)
@@ -121,6 +121,7 @@ class Estimator:
         # 데이터셋마다 같은 총 가중치, 그 안에서 SOC 구간(0.1)마다 같은 가중치 (학습 대상 표본 기준)
         w = np.array([1.0 / (tgt & (ds == d) & (sb == b)).sum() / len(set(sb[tgt & (ds == d)])) if t else 0.0
                       for d, b, t in zip(ds, sb, tgt)])
+        g6 = np.random.default_rng(40_000 + seed)
         for a, sh in zip(aug, shift):
             F = self.feats(a)
             rs, rm, rn = np.zeros(n), np.zeros((n, npt)), np.zeros(n)
@@ -134,7 +135,8 @@ class Estimator:
                     Fr[:, 0] += sh[rr]
                     rn[i] = ref_knn(Fr, s[rr], F[i]) - rs[i]
             keep = tgt & np.isin(dsk, [d for d in np.unique(dsk) if (reg & (dsk == d)).sum() >= 3])
-            Fs.append(np.c_[F, rs, rm, rn][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
+            tcn = self.temp_c[ok] + g6.normal(0, 2.0, n)  # 주변 온도 + 센서 잡음 2 °C
+            Fs.append(np.c_[F, rs, tcn, rm, rn][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
         wv = np.concatenate(ws)
         m.fit(np.vstack(Fs), np.concatenate(ys), sample_weight=wv / wv.mean())
         return m

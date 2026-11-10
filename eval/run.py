@@ -7,7 +7,9 @@
               (11-10 사용자 결정: 스테이션은 셀 종류를 안다 → 팩 등록 때 실온 HPPC를 한 번 한다고 가정). 채점은 25 °C 외 온도만.
               학습 dict의 reg는 학습 셀의 같은 등록 시험 표본 표시.
 분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R, Samsung_30T, Turnigy_GR (11-10 셀 2종 추가).
-주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 5개 × 오차 시드 3개 평균.
+주 지표: r = 300 s에서 0.5 × (LODO 5폴드 MAE 평균) + 0.5 × (온도 외삽 폴드 MAE 평균). 낮을수록 좋음.
+  온도 외삽 폴드(11-10): 학습 셀은 −10~25 °C만, 시험 셀은 −20·40 °C만 채점 (INR은 해당 온도 없음 → 제외).
+  추정기 시드 5개(외삽 폴드 3개) × 오차 시드 3개 평균.
 판정 기준: 가장 최근 baseline 행 이후의 baseline/improved 기록만 비교한다 (지표 정의가 바뀌면 baseline을 다시 찍는다).
 
 사용법 (에이전트): python -I eval/run.py --tag <변경유형> --desc "<한 줄 가설>"
@@ -45,11 +47,13 @@ def reg_mask(meta):
         if f:
             out |= k & (meta["file"] == f[0])
     return out
+EXT_TRAIN = (-10, 25)  # 11-10 사용자 결정: 온도 외삽 폴드의 학습 온도 범위. 시험은 이 밖(−20, 40 °C)
+EXT_SEEDS = [0, 1, 2]  # 외삽 폴드는 시간 때문에 추정기 시드 3개
 MIN_GAIN = 0.10  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다 (11-10 0.05→0.10: 시드 5×3 평균에도 잡음 ±0.1)
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV
 COLS = ["time", "commit", "primary_mae", "mae_r60", "mae_r600", "fold_lg", "fold_pan", "fold_inr",
-        "p95_r300", "sec", "status", "tag", "desc", "fold_sam", "fold_tur"]  # 새 열은 뒤에만 붙인다(옛 행 호환)
+        "p95_r300", "sec", "status", "tag", "desc", "fold_sam", "fold_tur", "mae_in", "mae_ext"]  # 새 열은 뒤에만 붙인다(옛 행 호환)
 
 
 def load(path):
@@ -77,16 +81,16 @@ def inner():
     meta = meta[keep]
     out = {}
     REG = reg_mask(meta)
-    for fold in FOLDS:
-        tr = meta["dataset"] != fold
+    T = meta["temp_c"]
+
+    def run_fold(key, fold, tr, te, seeds):
         reg = (meta["dataset"] == fold) & REG  # 등록 데이터
-        te = (meta["dataset"] == fold) & (meta["temp_c"] != REF_T)  # 채점: 25 °C 외
         ref = {"rest_V": X["rest_V"][reg], "soc": meta["soc"][reg], "rest_len": meta["rest_len"][reg]}
         train = {k: v[tr] for k, v in X.items()}
         train.update({c: meta[c][tr] for c in ["dataset", "chem", "cell", "temp_c", "soc", "rest_len"]})
         train["reg"] = REG[tr]  # 학습 셀의 등록 시험 표본 표시
         errs = {r: [] for r in RS}
-        for es in EST_SEEDS:
+        for es in seeds:
             model = est_mod.Estimator(seed=es)
             model.fit(train)
             for r in RS:
@@ -99,8 +103,15 @@ def inner():
                     errs[r].append(np.abs(np.clip(pred, 0, 1) - meta["soc"][sel]) * 100)
         for r in RS:
             e = np.concatenate(errs[r])
-            n = int((te & (meta["rest_len"] >= r)).sum())
-            out[f"{fold}|{r}"] = (float(e.mean()), float(np.percentile(e, 95)), n)
+            out[f"{key}|{r}"] = (float(e.mean()), float(np.percentile(e, 95)), int((te & (meta["rest_len"] >= r)).sum()))
+
+    for fold in FOLDS:  # 범위 안: 데이터셋 하나를 빼고 학습, 그 셀의 25 °C 외 채점
+        run_fold(fold, fold, meta["dataset"] != fold, (meta["dataset"] == fold) & (T != REF_T), EST_SEEDS)
+    for fold in FOLDS:  # 온도 외삽: 학습 셀은 EXT_TRAIN 범위 온도만, 시험 셀은 그 범위 밖 온도만 채점
+        te = (meta["dataset"] == fold) & ((T < EXT_TRAIN[0]) | (T > EXT_TRAIN[1]))
+        if te.sum():
+            tr = (meta["dataset"] != fold) & (T >= EXT_TRAIN[0]) & (T <= EXT_TRAIN[1])
+            run_fold("EXT_" + fold, fold, tr, te, EXT_SEEDS)
     print("__RESULT__" + json.dumps(out))
 
 
@@ -147,8 +158,11 @@ def main():
         status, vals = "crash", {}
         print(err)
     else:
-        m = lambda r: np.mean([res[f"{f}|{r}"][0] for f in FOLDS])  # noqa: E731
-        vals = dict(primary_mae=m(PRIMARY_R), mae_r60=m(60), mae_r600=m(600),
+        EXT = [k[:-len(f"|{PRIMARY_R}")] for k in res if k.startswith("EXT_") and k.endswith(f"|{PRIMARY_R}")]
+        m_in = lambda r: np.mean([res[f"{f}|{r}"][0] for f in FOLDS])  # noqa: E731
+        m_ext = lambda r: np.mean([res[f"{f}|{r}"][0] for f in EXT])  # noqa: E731
+        m = lambda r: 0.5 * m_in(r) + 0.5 * m_ext(r)  # noqa: E731  범위 안 5폴드와 온도 외삽 폴드를 반씩
+        vals = dict(primary_mae=m(PRIMARY_R), mae_r60=m(60), mae_r600=m(600), mae_in=m_in(PRIMARY_R), mae_ext=m_ext(PRIMARY_R),
                     fold_lg=res[f"LG_HG2|{PRIMARY_R}"][0], fold_pan=res[f"Panasonic_PF|{PRIMARY_R}"][0],
                     fold_inr=res[f"CALCE_INR20R|{PRIMARY_R}"][0],
                     fold_sam=res[f"Samsung_30T|{PRIMARY_R}"][0], fold_tur=res[f"Turnigy_GR|{PRIMARY_R}"][0],
@@ -168,7 +182,7 @@ def main():
     print(f"METRIC primary_mae={row.get('primary_mae', 'NA')} status={status} "
           f"(r60={row.get('mae_r60', 'NA')} r600={row.get('mae_r600', 'NA')} "
           f"LG={row.get('fold_lg', 'NA')} PAN={row.get('fold_pan', 'NA')} INR={row.get('fold_inr', 'NA')} "
-          f"SAM={row.get('fold_sam', 'NA')} TUR={row.get('fold_tur', 'NA')} "
+          f"SAM={row.get('fold_sam', 'NA')} TUR={row.get('fold_tur', 'NA')} IN={row.get('mae_in', 'NA')} EXT={row.get('mae_ext', 'NA')} "
           f"p95={row.get('p95_r300', 'NA')} {sec}s)")
     if res:
         for k, (mae, p95, n) in sorted(res.items()):

@@ -6,9 +6,11 @@
       dataset, chem, cell, temp_c, rest_len, soc (N,)   ※ 시험 때는 rest_V와 ref만 주어진다
   Estimator.predict({"rest_V": (M, r), "ref": {...}}) -> (M,) SOC 0~1
       r초까지만 보인다(60/300/600). 시험 전압에는 저가 측정 체인 오차가 들어 있다.
-      ref = 시험 셀 종류의 25 °C 등록 데이터(깨끗한 rest_V, soc, rest_len). 채점은 25 °C 외 온도만.
+      ref = 시험 셀 종류의 등록 시험(25 °C HPPC 한 번; 깨끗한 rest_V, soc, rest_len). 채점은 25 °C 외 온도만.
+      train["reg"] = 학습 셀의 같은 등록 시험 표본 표시.
 
-방법: 등록 곡선(25 °C 끝 전압 → SOC)의 단조 OCV 표를 특징 하나로 넣고, 학습 셀도 각자 자기 25 °C 데이터를 등록 곡선으로 쓴다.
+방법: 등록 곡선 SOC(끝 전압 단조 표)를 기준으로 잔차를 학습한다. 특징 = 휴지 모양 + 시점별 등록 표 SOC 차이 + 등록 표본 kNN SOC 차이.
+학습 셀도 각자 자기 등록 시험을 등록 곡선으로 쓰고, 등록 시험 외 표본 전부가 학습 대상이다.
 """
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
@@ -107,7 +109,7 @@ class Estimator:
         aug = [a * (1 + g.normal(0, 0.005, (n, 1))) + g.normal(0, 0.010, (n, 1))
                + g.normal(0, 1, x.shape) * g.uniform(0.001, 0.004) for a in aug]
         aug = [np.round(a / q) * q for a, q in zip(aug, g.uniform(0.003, 0.012, K))]
-        # 등록 곡선: 데이터셋마다 자기 25 °C 표본(깨끗한 전압 + 같은 곡선 이동). 학습 대상은 시험과 같이 25 °C 외만
+        # 등록 곡선: 데이터셋마다 자기 등록 시험 표본(깨끗한 전압 + 같은 곡선 이동). 학습 대상은 등록 시험 외 전부
         reg = self.reg[ok]  # 시험과 같은 등록 시험 표본만 등록 곡선으로
         tgt = ~reg  # 등록 시험 외 모든 표본이 학습 대상 (25 °C 주행 사이클 휴지 포함)
         F0 = self.feats(x)
@@ -116,7 +118,7 @@ class Estimator:
         Fs, ys, ws = [], [], []
         ds = dsk
         sb = np.clip((s * 10).astype(int), 0, 9)
-        # 데이터셋마다 같은 총 가중치, 그 안에서 SOC 구간(0.1)마다 같은 가중치 (25 °C 외 표본 기준)
+        # 데이터셋마다 같은 총 가중치, 그 안에서 SOC 구간(0.1)마다 같은 가중치 (학습 대상 표본 기준)
         w = np.array([1.0 / (tgt & (ds == d) & (sb == b)).sum() / len(set(sb[tgt & (ds == d)])) if t else 0.0
                       for d, b, t in zip(ds, sb, tgt)])
         for a, sh in zip(aug, shift):

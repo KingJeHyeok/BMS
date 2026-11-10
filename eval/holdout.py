@@ -38,7 +38,8 @@ def main():
         for es in R.EST_SEEDS:  # run.py와 같이 추정기 시드 평균
             model = est.Estimator(seed=es)
             model.fit(train)
-            errs += [np.abs(np.clip(model.predict({"rest_V": R.corrupt(H["rest_V"][sel], R.PRIMARY_R, 7000 + s), "ref": ref}),
+            errs += [np.abs(np.clip(model.predict({"rest_V": R.corrupt(H["rest_V"][sel], R.PRIMARY_R, 7000 + s), "ref": ref,
+                                                   "temp_c": hmeta["temp_c"][sel] + np.random.default_rng(9000 + s).normal(0, R.TEMP_SD, sel.sum())}),
                                     0, 1) - hmeta["soc"][sel]) * 100 for s in R.SEEDS]
         res[fold] = float(np.concatenate(errs).mean())
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=R.ROOT, capture_output=True,

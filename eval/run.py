@@ -6,6 +6,7 @@
             + ref: 시험 셀 종류의 등록 데이터 = 25 °C HPPC 시험 한 번(INR은 incremental OCV)의 깨끗한 rest_V·soc·rest_len
               (11-10 사용자 결정: 스테이션은 셀 종류를 안다 → 팩 등록 때 실온 HPPC를 한 번 한다고 가정). 채점은 25 °C 외 온도만.
               학습 dict의 reg는 학습 셀의 같은 등록 시험 표본 표시.
+            + temp_c: 휴지 중 주변 온도(°C), 챔버 온도 + 잡음 σ 2 °C (11-10 사용자 결정). 등록 시험은 25 °C.
 분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R, Samsung_30T, Turnigy_GR (11-10 셀 2종 추가).
 주 지표: r = 300 s에서 0.5 × (LODO 5폴드 MAE 평균) + 0.5 × (온도 외삽 폴드 MAE 평균). 낮을수록 좋음.
   온도 외삽 폴드(11-10): 학습 셀은 −10~25 °C만, 시험 셀은 −20·40 °C만 채점 (INR은 해당 온도 없음 → 제외).
@@ -49,6 +50,7 @@ def reg_mask(meta):
     return out
 EXT_TRAIN = (-10, 25)  # 11-10 사용자 결정: 온도 외삽 폴드의 학습 온도 범위. 시험은 이 밖(−20, 40 °C)
 EXT_SEEDS = [0, 1, 2]  # 외삽 폴드는 시간 때문에 추정기 시드 3개
+TEMP_SD = 2.0  # 11-10 사용자 결정: 스테이션 주변 온도 입력 허용. 센서·셀 온도 차이를 흉내 내 ±2 °C 잡음
 MIN_GAIN = 0.10  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다 (11-10 0.05→0.10: 시드 5×3 평균에도 잡음 ±0.1)
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV
@@ -97,7 +99,8 @@ def inner():
                 sel = te & (meta["rest_len"] >= r)
                 for s in SEEDS:
                     v = corrupt(X["rest_V"][sel], r, 1000 * s + r)
-                    pred = np.asarray(model.predict({"rest_V": v, "ref": ref}), float)
+                    tc = meta["temp_c"][sel] + np.random.default_rng(5000 + 1000 * s + r).normal(0, TEMP_SD, sel.sum())
+                    pred = np.asarray(model.predict({"rest_V": v, "ref": ref, "temp_c": tc}), float)
                     if pred.shape != (sel.sum(),) or not np.isfinite(pred).all():
                         raise ValueError(f"predict가 길이 {sel.sum()}의 유한한 배열을 반환해야 함")
                     errs[r].append(np.abs(np.clip(pred, 0, 1) - meta["soc"][sel]) * 100)

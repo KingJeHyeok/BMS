@@ -90,7 +90,7 @@ class Estimator:
                          monotone_constraints="(" + ",".join(["1"] * (nf - 3 - npt) + ["0", "0"] + ["0"] * (npt + 1)) + ")",  # 끝 전압·Δ +1, 나머지 자유
                          random_state=seed)
         g = np.random.default_rng(seed)
-        x, K = self.rest_V[ok, :r], 8
+        x, K = self.rest_V[ok, :r], 6  # 11-10 사용자 결정: 8→6 (평가 시간)
         n = len(x)
         full = self.rest_V[ok]
         last = np.minimum(self.rest_len[ok], full.shape[1])

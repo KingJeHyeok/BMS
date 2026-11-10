@@ -56,13 +56,13 @@ class Estimator:
         rk = ref["rest_len"] >= r
         rs = ref_map(self.feats(ref["rest_V"][rk, :r])[:, 0], ref["soc"][rk], self.feats(v)[:, 0])
         F = np.c_[self.feats(v), rs]
-        return np.clip(np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)
+        return np.clip(rs + np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)  # 등록 곡선 SOC + 보정
 
     def _train(self, r, seed):
         ok = self.rest_len >= r
         nf = self.feats(self.rest_V[:1, :r]).shape[1] + 1
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(" + ",".join(["1"] * (nf - 2) + ["0", "1"]) + ")",  # 끝 전압·Δ +1, frac 자유, 등록 SOC +1
+                         monotone_constraints="(" + ",".join(["1"] * (nf - 2) + ["0", "0"]) + ")",  # 끝 전압·Δ +1, frac·등록 SOC 자유(잔차 대상)
                          random_state=seed)
         g = np.random.default_rng(seed)
         x, K = self.rest_V[ok, :r], 8
@@ -102,7 +102,7 @@ class Estimator:
                 if rr.sum() >= 3:
                     rs[i] = ref_map(end0[rr] + sh[rr], s[rr], F[i, 0])
             keep = tgt & np.isin(dsk, [d for d in np.unique(dsk) if (reg & (dsk == d)).sum() >= 3])
-            Fs.append(np.c_[F, rs][keep]); ys.append(s[keep]); ws.append(w[keep])
+            Fs.append(np.c_[F, rs][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
         wv = np.concatenate(ws)
         m.fit(np.vstack(Fs), np.concatenate(ys), sample_weight=wv / wv.mean())
         return m

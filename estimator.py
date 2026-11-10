@@ -3,8 +3,8 @@
 인터페이스 (eval/run.py가 호출):
   Estimator(seed).fit(train)  train: dict
       rest_V (N,1800) 휴지 전압, 휴지가 끝나면 NaN / pre_V, pre_I (N,300) 휴지 직전
-      dataset, chem, cell, temp_c, rest_len, soc (N,)   ※ 시험 때는 rest_V와 ref만 주어진다
-  Estimator.predict({"rest_V": (M, r), "ref": {...}}) -> (M,) SOC 0~1
+      dataset, chem, cell, temp_c, rest_len, soc (N,)   ※ 시험 때는 rest_V, ref, temp_c(주변 온도, ±2 °C 잡음)만 주어진다
+  Estimator.predict({"rest_V": (M, r), "ref": {...}, "temp_c": (M,)}) -> (M,) SOC 0~1
       r초까지만 보인다(60/300/600). 시험 전압에는 저가 측정 체인 오차가 들어 있다.
       ref = 시험 셀 종류의 등록 시험(25 °C HPPC 한 번; 깨끗한 rest_V, soc, rest_len). 채점은 25 °C 외 온도만.
       train["reg"] = 학습 셀의 같은 등록 시험 표본 표시.

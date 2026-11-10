@@ -3,8 +3,9 @@
 스테이션은 비행 중 전압·전류를 보지 못한다. 착륙 후 휴지 전압만 본다.
   학습 입력: 개발 데이터의 rest_V(깨끗한 값), pre_V, pre_I, 메타(dataset, chem, cell, temp_c), soc
   시험 입력: rest_V의 처음 r초만, 저가 측정 체인 오차를 입힌 값. 메타·온도·pre 구간 없음.
-            + ref: 시험 셀 종류의 등록 데이터 = 같은 데이터셋 25 °C 표본의 깨끗한 rest_V·soc·rest_len (11-10 사용자 결정:
-              스테이션은 셀 종류를 안다 → 팩 등록 때 실온 특성 시험을 한 번 한다고 가정). 채점은 25 °C 외 온도만.
+            + ref: 시험 셀 종류의 등록 데이터 = 25 °C HPPC 시험 한 번(INR은 incremental OCV)의 깨끗한 rest_V·soc·rest_len
+              (11-10 사용자 결정: 스테이션은 셀 종류를 안다 → 팩 등록 때 실온 HPPC를 한 번 한다고 가정). 채점은 25 °C 외 온도만.
+              학습 dict의 reg는 학습 셀의 같은 등록 시험 표본 표시.
 분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R, Samsung_30T, Turnigy_GR (11-10 셀 2종 추가).
 주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 5개 × 오차 시드 3개 평균.
 판정 기준: 가장 최근 baseline 행 이후의 baseline/improved 기록만 비교한다 (지표 정의가 바뀌면 baseline을 다시 찍는다).
@@ -14,6 +15,7 @@
 결과는 results.tsv에 자동으로 한 줄 추가된다. status는 현재 HEAD 이력의 최고 기록 대비 자동 판정.
 """
 import argparse
+import re
 import importlib.util
 import json
 import subprocess
@@ -31,6 +33,18 @@ PRIMARY_R = 300
 SEEDS = [0, 1, 2]
 EST_SEEDS = [0, 1, 2, 3, 4]  # 추정기 시드. 시드 운(약 0.08 %p)이 MIN_GAIN보다 크게 작용하지 않게 평균한다
 REF_T = 25  # 등록 시험 온도 (°C)
+REG_FILE = re.compile(r"HPPC|Incremental OCV", re.I)  # 11-10: 등록 = 25 °C HPPC(INR은 incremental OCV) 시험 한 번
+
+
+def reg_mask(meta):
+    """데이터셋마다 25 °C 등록 시험 파일 하나(이름순 첫 HPPC/incremental OCV)의 표본."""
+    out = np.zeros(len(meta), bool)
+    for d in np.unique(meta["dataset"]):
+        k = (meta["dataset"] == d) & (meta["temp_c"] == REF_T)
+        f = sorted({x for x in meta["file"][k] if REG_FILE.search(x)})
+        if f:
+            out |= k & (meta["file"] == f[0])
+    return out
 MIN_GAIN = 0.10  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다 (11-10 0.05→0.10: 시드 5×3 평균에도 잡음 ±0.1)
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV
@@ -62,13 +76,15 @@ def inner():
     X = {k: v[keep] for k, v in X.items()}
     meta = meta[keep]
     out = {}
+    REG = reg_mask(meta)
     for fold in FOLDS:
         tr = meta["dataset"] != fold
-        reg = (meta["dataset"] == fold) & (meta["temp_c"] == REF_T)  # 등록 데이터(채점 제외)
-        te = (meta["dataset"] == fold) & ~reg
+        reg = (meta["dataset"] == fold) & REG  # 등록 데이터
+        te = (meta["dataset"] == fold) & (meta["temp_c"] != REF_T)  # 채점: 25 °C 외
         ref = {"rest_V": X["rest_V"][reg], "soc": meta["soc"][reg], "rest_len": meta["rest_len"][reg]}
         train = {k: v[tr] for k, v in X.items()}
         train.update({c: meta[c][tr] for c in ["dataset", "chem", "cell", "temp_c", "soc", "rest_len"]})
+        train["reg"] = REG[tr]  # 학습 셀의 등록 시험 표본 표시
         errs = {r: [] for r in RS}
         for es in EST_SEEDS:
             model = est_mod.Estimator(seed=es)

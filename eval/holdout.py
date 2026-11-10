@@ -25,12 +25,14 @@ def main():
     X, meta = R.load(R.ROOT / "data" / "rest_dev.npz")
     H, hmeta = R.load(Path("C:/BMS/data/holdout/rest_holdout.npz"))
     res = {}
+    REG = R.reg_mask(meta)
     for fold in R.FOLDS:
         tr = np.isin(meta["dataset"], R.FOLDS) & (meta["dataset"] != fold)
         train = {k: v[tr] for k, v in X.items()}
         train.update({c: meta[c][tr] for c in ["dataset", "chem", "cell", "temp_c", "soc", "rest_len"]})
+        train["reg"] = REG[tr]
         sel = (hmeta["dataset"] == fold) & (hmeta["rest_len"] >= R.PRIMARY_R)
-        reg = (meta["dataset"] == fold) & (meta["temp_c"] == R.REF_T)  # 등록 데이터: 개발 셋의 같은 셀 25 °C
+        reg = (meta["dataset"] == fold) & REG  # 등록 데이터: 개발 셋의 같은 셀 25 °C HPPC 한 번
         ref = {"rest_V": X["rest_V"][reg], "soc": meta["soc"][reg], "rest_len": meta["rest_len"][reg]}
         errs = []
         for es in R.EST_SEEDS:  # run.py와 같이 추정기 시드 평균

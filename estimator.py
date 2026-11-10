@@ -12,6 +12,7 @@
 """
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
+from sklearn.neighbors import KNeighborsRegressor
 from xgboost import XGBRegressor
 
 REF_T = 25
@@ -33,6 +34,12 @@ def pts(v):
 def ref_multi(Pr, sr, P):
     """시점마다 등록 곡선 단조 표: 같은 시점 전압 → SOC."""
     return np.stack([ref_map(Pr[:, j], sr, P[:, j]) for j in range(P.shape[1])], 1)
+
+
+def ref_knn(Fr, sr, F):
+    """등록 표본 공간(끝 전압, Δ9, 늦은 Δ; Δ는 ×3)에서 최근접 5개 거리 가중 SOC."""
+    z = lambda A: A[:, [0, 2, -2]] * np.array([1.0, 3.0, 3.0])  # noqa: E731
+    return KNeighborsRegressor(min(5, len(sr)), weights="distance").fit(z(Fr), sr).predict(z(F))
 
 
 class Estimator:
@@ -68,15 +75,17 @@ class Estimator:
         ref = test["ref"]
         rk = ref["rest_len"] >= r
         rs = ref_map(self.feats(ref["rest_V"][rk, :r])[:, 0], ref["soc"][rk], self.feats(v)[:, 0])
-        F = np.c_[self.feats(v), rs, ref_multi(pts(ref["rest_V"][rk, :r]), ref["soc"][rk], pts(v)) - rs[:, None]]
+        Fr, Fv = self.feats(ref["rest_V"][rk, :r]), self.feats(v)
+        F = np.c_[Fv, rs, ref_multi(pts(ref["rest_V"][rk, :r]), ref["soc"][rk], pts(v)) - rs[:, None],
+                  ref_knn(Fr, ref["soc"][rk], Fv) - rs]
         return np.clip(rs + np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)  # 등록 곡선 SOC + 보정
 
     def _train(self, r, seed):
         ok = self.rest_len >= r
         npt = pts(self.rest_V[:1, :r]).shape[1]
-        nf = self.feats(self.rest_V[:1, :r]).shape[1] + 1 + pts(self.rest_V[:1, :r]).shape[1]
+        nf = self.feats(self.rest_V[:1, :r]).shape[1] + 2 + pts(self.rest_V[:1, :r]).shape[1]
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(" + ",".join(["1"] * (nf - 2 - npt) + ["0", "0"] + ["0"] * npt) + ")",  # 끝 전압·Δ +1, 나머지 자유
+                         monotone_constraints="(" + ",".join(["1"] * (nf - 3 - npt) + ["0", "0"] + ["0"] * (npt + 1)) + ")",  # 끝 전압·Δ +1, 나머지 자유
                          random_state=seed)
         g = np.random.default_rng(seed)
         x, K = self.rest_V[ok, :r], 8
@@ -101,7 +110,8 @@ class Estimator:
         # 등록 곡선: 데이터셋마다 자기 25 °C 표본(깨끗한 전압 + 같은 곡선 이동). 학습 대상은 시험과 같이 25 °C 외만
         reg = self.reg[ok]  # 시험과 같은 등록 시험 표본만 등록 곡선으로
         tgt = ~reg  # 등록 시험 외 모든 표본이 학습 대상 (25 °C 주행 사이클 휴지 포함)
-        end0 = self.feats(x)[:, 0]
+        F0 = self.feats(x)
+        end0 = F0[:, 0]
         P0 = pts(x)
         Fs, ys, ws = [], [], []
         ds = dsk
@@ -111,15 +121,18 @@ class Estimator:
                       for d, b, t in zip(ds, sb, tgt)])
         for a, sh in zip(aug, shift):
             F = self.feats(a)
-            rs, rm = np.zeros(n), np.zeros((n, npt))
+            rs, rm, rn = np.zeros(n), np.zeros((n, npt)), np.zeros(n)
             Pa = pts(a)
             for d in np.unique(dsk):
                 i, rr = dsk == d, (dsk == d) & reg
                 if rr.sum() >= 3:
                     rs[i] = ref_map(end0[rr] + sh[rr], s[rr], F[i, 0])
                     rm[i] = ref_multi(P0[rr] + sh[rr, None], s[rr], Pa[i]) - rs[i, None]
+                    Fr = F0[rr].copy()
+                    Fr[:, 0] += sh[rr]
+                    rn[i] = ref_knn(Fr, s[rr], F[i]) - rs[i]
             keep = tgt & np.isin(dsk, [d for d in np.unique(dsk) if (reg & (dsk == d)).sum() >= 3])
-            Fs.append(np.c_[F, rs, rm][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
+            Fs.append(np.c_[F, rs, rm, rn][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
         wv = np.concatenate(ws)
         m.fit(np.vstack(Fs), np.concatenate(ys), sample_weight=wv / wv.mean())
         return m

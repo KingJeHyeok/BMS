@@ -96,7 +96,7 @@ class Estimator:
         last = np.minimum(self.rest_len[ok], full.shape[1])
         vinf = np.array([row[l - 5:l].mean() for row, l in zip(full, last)])[:, None]  # 긴 휴지 끝 ≈ OCV
         # 직전 전류 크기 증강: 과전압 η = vinf − V를 log 균등 0.1–1.5배 (저전류 OCV 시험까지 덮음)
-        aug = [vinf - np.exp(g.uniform(np.log(0.1), np.log(1.5), (n, 1))) * (vinf - x) for _ in range(K)]
+        aug = [vinf - np.exp(g.uniform(np.log(0.1), np.log(4.0), (n, 1))) * (vinf - x) for _ in range(K)]
         # OCV 곡선 모양 무작위화: 사본·데이터셋마다 SOC의 매끄러운 함수로 전압 이동 (등록 곡선에도 같은 이동을 준다)
         s, dsk = self.soc[ok], self.dataset[ok]
         shift = np.zeros((K, n))

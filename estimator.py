@@ -23,6 +23,18 @@ def ref_map(ref_end, ref_soc, end):
     return iso.predict(end)
 
 
+def pts(v):
+    """Δ 시점들의 5점 평균 전압 (feats와 같은 시점, 끝 제외)."""
+    r = v.shape[1]
+    idx = sorted({9, min(29, r - 6), min(59, r - 6), r // 2})
+    return np.stack([v[:, max(i - 2, 0):i + 3].mean(1) for i in idx], 1)
+
+
+def ref_multi(Pr, sr, P):
+    """시점마다 등록 곡선 단조 표: 같은 시점 전압 → SOC."""
+    return np.stack([ref_map(Pr[:, j], sr, P[:, j]) for j in range(P.shape[1])], 1)
+
+
 class Estimator:
     def __init__(self, seed=0):
         self.seed = seed
@@ -55,14 +67,15 @@ class Estimator:
         ref = test["ref"]
         rk = ref["rest_len"] >= r
         rs = ref_map(self.feats(ref["rest_V"][rk, :r])[:, 0], ref["soc"][rk], self.feats(v)[:, 0])
-        F = np.c_[self.feats(v), rs]
+        F = np.c_[self.feats(v), rs, ref_multi(pts(ref["rest_V"][rk, :r]), ref["soc"][rk], pts(v)) - rs[:, None]]
         return np.clip(rs + np.mean([m.predict(F) for m in self._models[r]], 0), 0, 1)  # 등록 곡선 SOC + 보정
 
     def _train(self, r, seed):
         ok = self.rest_len >= r
-        nf = self.feats(self.rest_V[:1, :r]).shape[1] + 1
+        npt = pts(self.rest_V[:1, :r]).shape[1]
+        nf = self.feats(self.rest_V[:1, :r]).shape[1] + 1 + pts(self.rest_V[:1, :r]).shape[1]
         m = XGBRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, objective="reg:absoluteerror",
-                         monotone_constraints="(" + ",".join(["1"] * (nf - 2) + ["0", "0"]) + ")",  # 끝 전압·Δ +1, frac·등록 SOC 자유(잔차 대상)
+                         monotone_constraints="(" + ",".join(["1"] * (nf - 2 - npt) + ["0", "0"] + ["0"] * npt) + ")",  # 끝 전압·Δ +1, 나머지 자유
                          random_state=seed)
         g = np.random.default_rng(seed)
         x, K = self.rest_V[ok, :r], 8
@@ -88,6 +101,7 @@ class Estimator:
         reg = self.temp_c[ok] == REF_T
         tgt = ~reg
         end0 = self.feats(x)[:, 0]
+        P0 = pts(x)
         Fs, ys, ws = [], [], []
         ds = dsk
         sb = np.clip((s * 10).astype(int), 0, 9)
@@ -96,13 +110,15 @@ class Estimator:
                       for d, b, t in zip(ds, sb, tgt)])
         for a, sh in zip(aug, shift):
             F = self.feats(a)
-            rs = np.zeros(n)
+            rs, rm = np.zeros(n), np.zeros((n, npt))
+            Pa = pts(a)
             for d in np.unique(dsk):
                 i, rr = dsk == d, (dsk == d) & reg
                 if rr.sum() >= 3:
                     rs[i] = ref_map(end0[rr] + sh[rr], s[rr], F[i, 0])
+                    rm[i] = ref_multi(P0[rr] + sh[rr, None], s[rr], Pa[i]) - rs[i, None]
             keep = tgt & np.isin(dsk, [d for d in np.unique(dsk) if (reg & (dsk == d)).sum() >= 3])
-            Fs.append(np.c_[F, rs][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
+            Fs.append(np.c_[F, rs, rm][keep]); ys.append((s - rs)[keep]); ws.append(w[keep])  # 잔차 학습
         wv = np.concatenate(ws)
         m.fit(np.vstack(Fs), np.concatenate(ys), sample_weight=wv / wv.mean())
         return m

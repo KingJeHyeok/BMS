@@ -3,6 +3,8 @@
 스테이션은 비행 중 전압·전류를 보지 못한다. 착륙 후 휴지 전압만 본다.
   학습 입력: 개발 데이터의 rest_V(깨끗한 값), pre_V, pre_I, 메타(dataset, chem, cell, temp_c), soc
   시험 입력: rest_V의 처음 r초만, 저가 측정 체인 오차를 입힌 값. 메타·온도·pre 구간 없음.
+            + ref: 시험 셀 종류의 등록 데이터 = 같은 데이터셋 25 °C 표본의 깨끗한 rest_V·soc·rest_len (11-10 사용자 결정:
+              스테이션은 셀 종류를 안다 → 팩 등록 때 실온 특성 시험을 한 번 한다고 가정). 채점은 25 °C 외 온도만.
 분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R, Samsung_30T, Turnigy_GR (11-10 셀 2종 추가).
 주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 5개 × 오차 시드 3개 평균.
 판정 기준: 가장 최근 baseline 행 이후의 baseline/improved 기록만 비교한다 (지표 정의가 바뀌면 baseline을 다시 찍는다).
@@ -28,6 +30,7 @@ RS = [60, 300, 600]
 PRIMARY_R = 300
 SEEDS = [0, 1, 2]
 EST_SEEDS = [0, 1, 2, 3, 4]  # 추정기 시드. 시드 운(약 0.08 %p)이 MIN_GAIN보다 크게 작용하지 않게 평균한다
+REF_T = 25  # 등록 시험 온도 (°C)
 MIN_GAIN = 0.10  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다 (11-10 0.05→0.10: 시드 5×3 평균에도 잡음 ±0.1)
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV
@@ -60,7 +63,10 @@ def inner():
     meta = meta[keep]
     out = {}
     for fold in FOLDS:
-        tr, te = meta["dataset"] != fold, meta["dataset"] == fold
+        tr = meta["dataset"] != fold
+        reg = (meta["dataset"] == fold) & (meta["temp_c"] == REF_T)  # 등록 데이터(채점 제외)
+        te = (meta["dataset"] == fold) & ~reg
+        ref = {"rest_V": X["rest_V"][reg], "soc": meta["soc"][reg], "rest_len": meta["rest_len"][reg]}
         train = {k: v[tr] for k, v in X.items()}
         train.update({c: meta[c][tr] for c in ["dataset", "chem", "cell", "temp_c", "soc", "rest_len"]})
         errs = {r: [] for r in RS}
@@ -71,7 +77,7 @@ def inner():
                 sel = te & (meta["rest_len"] >= r)
                 for s in SEEDS:
                     v = corrupt(X["rest_V"][sel], r, 1000 * s + r)
-                    pred = np.asarray(model.predict({"rest_V": v}), float)
+                    pred = np.asarray(model.predict({"rest_V": v, "ref": ref}), float)
                     if pred.shape != (sel.sum(),) or not np.isfinite(pred).all():
                         raise ValueError(f"predict가 길이 {sel.sum()}의 유한한 배열을 반환해야 함")
                     errs[r].append(np.abs(np.clip(pred, 0, 1) - meta["soc"][sel]) * 100)

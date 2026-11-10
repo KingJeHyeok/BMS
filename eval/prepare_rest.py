@@ -20,7 +20,8 @@ import scipy.io as sio
 
 PRE_S, REST_S, MIN_REST_S = 300, 1800, 300
 I_REST = 0.02  # A
-HOLDOUT = {("LG_HG2", 10), ("Panasonic_PF", 10), ("CALCE_INR20R", 45), ("CALCE_A123", 30)}
+HOLDOUT = {("LG_HG2", 10), ("Panasonic_PF", 10), ("CALCE_INR20R", 45), ("CALCE_A123", 30),
+           ("Samsung_30T", 10), ("Turnigy_GR", 10)}
 HERE = Path(__file__).resolve().parents[1]
 HOLD_DIR = Path("C:/BMS/data/holdout")
 
@@ -33,8 +34,12 @@ def temp_from(s):
 def read_mat(p):
     m = sio.loadmat(p, squeeze_me=True, struct_as_record=False)["meas"]
     # 원본 로그에 긴 공백이 있어 직접 적분하면 Ah가 빠진다(Panasonic HPPC 25 °C: 1.34 vs 2.77 Ah). 장비 Ah를 쓴다.
-    return pd.DataFrame({"t": m.Time.astype(float), "V": m.Voltage.astype(float), "I": m.Current.astype(float),
-                         "Ah": m.Ah.astype(float)})
+    t, I, ah = m.Time.astype(float), m.Current.astype(float), m.Ah.astype(float)
+    # 장비 Ah 카운터가 시험 중간에 0으로 리셋되는 파일이 있다(Samsung·Turnigy 0.5C 방전 등) → 이어 붙인다
+    d, exp = np.diff(ah), np.clip(I[1:], 0, None) * np.diff(t) / 3600
+    reset = (d > 0.02 + 1.5 * exp) & (np.abs(ah[1:]) < 0.01)
+    ah = ah - np.r_[0, np.cumsum(np.where(reset, d - exp, 0))]
+    return pd.DataFrame({"t": t, "V": m.Voltage.astype(float), "I": I, "Ah": ah})
 
 
 def read_arbin(p):
@@ -58,6 +63,13 @@ def files(raw):
         if not re.search(r"charge|eis|trise", f"{p.parent.parent.name}/{p.parent.name}/{p.name}", re.I):
             yield dict(path=p, reader="mat", dataset="Panasonic_PF", chem="NCA", vmax=4.2, cell="PAN_1",
                        temp_c=temp_from(p.parent.parent.name))
+    # 11-10 추가: McMaster(Kollmeyer) 같은 형식의 셀 2종. 처음 보는 화학계·형상(21700 원통, LiPo 파우치)
+    for sub, ds, chem, cell in [("samsung_30t", "Samsung_30T", "NMC", "SAM_30T"),
+                                ("turnigy_graphene", "Turnigy_GR", "LiPo", "TUR_GR")]:
+        for p in sorted((raw / sub).glob("*/*.mat")):
+            if "Charge" not in p.name:
+                yield dict(path=p, reader="mat", dataset=ds, chem=chem, vmax=4.2, cell=cell,
+                           temp_c=temp_from(p.parent.name))
     for p in sorted((raw / "calce_inr18650_20r" / "extracted").glob("SP1_*C_*_OCV_*/*.xls*")):
         yield dict(path=p, reader="arbin", dataset="CALCE_INR20R", chem="NMC", vmax=4.2, cell="INR_SP20-1",
                    temp_c=int(re.search(r"SP1_(\d+)C", p.parent.name).group(1)))
@@ -103,17 +115,14 @@ def anchor(df, vmax):
     return out
 
 
-def long_charge_before(I, a):
-    c = (I[:a] > 0.05).astype(int)
-    e = np.flatnonzero(np.diff(np.r_[0, c, 0]))
-    return any(b - x > 600 for x, b in zip(e[::2], e[1::2]))
-
-
 def samples(job):
     df = read_mat(job["path"]) if job["reader"] == "mat" else read_arbin(job["path"])
     out, ah = [], np.zeros(1)  # 만충 기준점이 없는 파일은 표본 0개 (이전에는 ah 미정의 오류)
-    for k, t0 in enumerate(anchor(df, job["vmax"])):
-        seg = df[df.t >= t0]
+    A = anchor(df, job["vmax"])
+    for k, t0 in enumerate(A):
+        # 한 기준점의 구간 = 다음 기준점(만충 재충전) 전까지. 11-10: 이전의 '600 s 넘는 충전 이후 중단' 규칙은
+        # HPPC 안의 SOC 복귀 충전에서 멈춰 Samsung·Turnigy HPPC 표본이 0개였음 (LG·PAN 표본 수는 그대로)
+        seg = df[(df.t >= t0) & (df.t < (A[k + 1] if k + 1 < len(A) else np.inf))]
         g = to_1hz(seg, t0)
         V, I, ah = g.V.to_numpy(), g.I.to_numpy(), g.ah.to_numpy()
         rest = np.abs(I) < I_REST
@@ -123,8 +132,6 @@ def samples(job):
                 continue
             if I[a - 60:a].mean() > -I_REST:  # 방전 직후 휴지만
                 continue
-            if long_charge_before(I, a):  # 중간 재충전(600 s 넘는 충전) 이후는 제외
-                break
             rv = np.full(REST_S, np.nan)
             n = min(b - a, REST_S)
             rv[:n] = V[a:a + n]
@@ -156,7 +163,8 @@ def main():
         rows += s
     S = pd.DataFrame(rows)
     # 기준 용량 = 25 °C 컷오프까지 방전한 Ah. LG 주행 사이클은 약 3.2 V에서 멈춰서 25 °C HPPC 값(2.774)을 쓴다
-    caps.update({"LG_HG2": 2.774, "PAN_1": 2.799, "INR_SP20-2": 2.055, "A123_007": 1.036, "A123_008": 1.058})
+    caps.update({"LG_HG2": 2.774, "PAN_1": 2.799, "INR_SP20-2": 2.055, "A123_007": 1.036, "A123_008": 1.058,
+                 "SAM_30T": 2.940, "TUR_GR": 4.706})  # 11-10: 같은 정의(25 °C HPPC, 컷오프 2.5/2.8 V까지)
     print("기준 용량(Ah):", {k: round(v, 3) for k, v in caps.items()})
     # A123 두 셀은 25 °C가 각자 있음. 없는 셀은 같은 데이터셋 최대값
     for c in S.cell.unique():

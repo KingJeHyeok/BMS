@@ -43,7 +43,7 @@ def main():
     new = not LOG.exists()
     with LOG.open("a", encoding="utf-8") as f:
         if new:
-            f.write("time\tcommit\tholdout_mae\tlg\tpan\tinr\n")
+            f.write("time\tcommit\tholdout_mae\t" + "\t".join(R.FOLDS) + "\n")
         f.write(f"{datetime.now():%m-%d %H:%M}\t{commit}\t{mean:.3f}\t" + "\t".join(f"{res[k]:.3f}" for k in R.FOLDS) + "\n")
     print(f"HOLDOUT mae={mean:.3f}  " + "  ".join(f"{k}={v:.2f}" for k, v in res.items()))
 

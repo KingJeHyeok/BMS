@@ -3,7 +3,7 @@
 스테이션은 비행 중 전압·전류를 보지 못한다. 착륙 후 휴지 전압만 본다.
   학습 입력: 개발 데이터의 rest_V(깨끗한 값), pre_V, pre_I, 메타(dataset, chem, cell, temp_c), soc
   시험 입력: rest_V의 처음 r초만, 저가 측정 체인 오차를 입힌 값. 메타·온도·pre 구간 없음.
-분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R.
+분할: 데이터셋 하나를 빼고 학습(LODO). 폴드 = LG_HG2, Panasonic_PF, CALCE_INR20R, Samsung_30T, Turnigy_GR (11-10 셀 2종 추가).
 주 지표: r = 300 s에서 폴드별 MAE(%p)의 평균 (낮을수록 좋음). 추정기 시드 5개 × 오차 시드 3개 평균.
 판정 기준: 가장 최근 baseline 행 이후의 baseline/improved 기록만 비교한다 (지표 정의가 바뀌면 baseline을 다시 찍는다).
 
@@ -23,16 +23,16 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-FOLDS = ["LG_HG2", "Panasonic_PF", "CALCE_INR20R"]
+FOLDS = ["LG_HG2", "Panasonic_PF", "CALCE_INR20R", "Samsung_30T", "Turnigy_GR"]
 RS = [60, 300, 600]
 PRIMARY_R = 300
 SEEDS = [0, 1, 2]
 EST_SEEDS = [0, 1, 2, 3, 4]  # 추정기 시드. 시드 운(약 0.08 %p)이 MIN_GAIN보다 크게 작용하지 않게 평균한다
-MIN_GAIN = 0.05  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다
+MIN_GAIN = 0.10  # %p. 이보다 작게 좋아지면 개선으로 치지 않는다 (11-10 0.05→0.10: 시드 5×3 평균에도 잡음 ±0.1)
 TIMEOUT_S = 600
 LSB = 3.3 / 4096 * (115 / 15)  # 분압 100k/15k + 12 bit ADC, 약 6.2 mV
 COLS = ["time", "commit", "primary_mae", "mae_r60", "mae_r600", "fold_lg", "fold_pan", "fold_inr",
-        "p95_r300", "sec", "status", "tag", "desc"]
+        "p95_r300", "sec", "status", "tag", "desc", "fold_sam", "fold_tur"]  # 새 열은 뒤에만 붙인다(옛 행 호환)
 
 
 def load(path):
@@ -129,6 +129,7 @@ def main():
         vals = dict(primary_mae=m(PRIMARY_R), mae_r60=m(60), mae_r600=m(600),
                     fold_lg=res[f"LG_HG2|{PRIMARY_R}"][0], fold_pan=res[f"Panasonic_PF|{PRIMARY_R}"][0],
                     fold_inr=res[f"CALCE_INR20R|{PRIMARY_R}"][0],
+                    fold_sam=res[f"Samsung_30T|{PRIMARY_R}"][0], fold_tur=res[f"Turnigy_GR|{PRIMARY_R}"][0],
                     p95_r300=np.mean([res[f"{f}|{PRIMARY_R}"][1] for f in FOLDS]))
         best = best_in_history(rows)
         if a.tag == "baseline" or best is None:
@@ -145,6 +146,7 @@ def main():
     print(f"METRIC primary_mae={row.get('primary_mae', 'NA')} status={status} "
           f"(r60={row.get('mae_r60', 'NA')} r600={row.get('mae_r600', 'NA')} "
           f"LG={row.get('fold_lg', 'NA')} PAN={row.get('fold_pan', 'NA')} INR={row.get('fold_inr', 'NA')} "
+          f"SAM={row.get('fold_sam', 'NA')} TUR={row.get('fold_tur', 'NA')} "
           f"p95={row.get('p95_r300', 'NA')} {sec}s)")
     if res:
         for k, (mae, p95, n) in sorted(res.items()):

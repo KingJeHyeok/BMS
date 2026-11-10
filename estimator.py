@@ -45,6 +45,7 @@ class Estimator:
         self.soc = train["soc"]
         self.dataset = train["dataset"]
         self.temp_c = train["temp_c"]
+        self.reg = train.get("reg", train["temp_c"] == REF_T)  # 학습 셀의 등록 시험(25 °C HPPC 한 번) 표본
         self._models = {}
         return self
 
@@ -98,8 +99,8 @@ class Estimator:
                + g.normal(0, 1, x.shape) * g.uniform(0.001, 0.004) for a in aug]
         aug = [np.round(a / q) * q for a, q in zip(aug, g.uniform(0.003, 0.012, K))]
         # 등록 곡선: 데이터셋마다 자기 25 °C 표본(깨끗한 전압 + 같은 곡선 이동). 학습 대상은 시험과 같이 25 °C 외만
-        reg = self.temp_c[ok] == REF_T
-        tgt = ~reg
+        reg = self.reg[ok]  # 시험과 같은 등록 시험 표본만 등록 곡선으로
+        tgt = ~reg  # 등록 시험 외 모든 표본이 학습 대상 (25 °C 주행 사이클 휴지 포함)
         end0 = self.feats(x)[:, 0]
         P0 = pts(x)
         Fs, ys, ws = [], [], []

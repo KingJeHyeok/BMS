@@ -1,0 +1,30 @@
+{
+ "name": "A_no_residual",
+ "sec": 83.67270994186401,
+ "args": {
+  "name": "A_no_residual",
+  "rs": "300",
+  "est_seeds": "0,1,2",
+  "ext_seeds": "0,1,2",
+  "n_jobs": 2,
+  "check": false
+ },
+ "summary": {
+  "300": {
+   "primary": 3.528546642051907,
+   "mae_in": 3.24280451415628,
+   "mae_ext": 3.8142887699475345,
+   "folds": {
+    "CALCE_INR20R": 2.4370246647129314,
+    "EXT_LG_HG2": 2.568818191482556,
+    "EXT_Panasonic_PF": 4.769897547752768,
+    "EXT_Samsung_30T": 2.3828078574862914,
+    "EXT_Turnigy_GR": 5.535631483068522,
+    "LG_HG2": 2.1381799602406195,
+    "Panasonic_PF": 2.4616986904297513,
+    "Samsung_30T": 3.4421673706593103,
+    "Turnigy_GR": 5.734951884738787
+   }
+  }
+ }
+}

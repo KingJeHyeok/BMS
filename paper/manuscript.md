@@ -1,57 +1,68 @@
 # Rest-Matched Two-Point Registration for Fast State-of-Charge Estimation of Returning Drone Batteries with Low-Cost Sensing
 
-*Draft v1 (2026-11-18), methods framing. Target: IEEE Access. [TEST3] marks values pending the preregistered Test 3.*
+*Draft v2 (2026-11-18), revised after review round 1. Target: IEEE Access. [TEST3] marks values pending the preregistered Test 3.*
 
 ## Abstract
 
-Battery stations for drones must estimate the state of charge (SOC) of a returning pack within minutes of landing, when coulomb-counting estimates from low-cost sensors have drifted. The rest voltage after landing is an attractive observation, but the rest is short, the temperature varies, and the measurement chain is inexpensive. Existing options either read a room-temperature open-circuit-voltage (OCV) table, which ignores the large low-temperature depression of the rest voltage, or correct it with a model learned on other cells, which we show does not transfer to new cells. We propose rest-matched two-point registration (RM2P). Each cell type is registered once at 25 °C and once at a low temperature with rests of the same length as in the field. SOC is read from both tables and interpolated in the SOC domain by temperature, without extrapolation above 25 °C. RM2P needs no training data and runs in under 1 ms. We evaluated it with a development phase on five public datasets and three preregistered single-run tests on 23 unseen cells from three laboratories. A learned residual-correction model that reduced development error from 3.40 to 2.11 percentage points (pp) gave no gain over room-temperature lookup on 13 unseen cells (1.43 vs 1.41 pp), because the low-temperature depression is cell-specific. On six unseen cells spanning −25 to 45 °C, RM2P reduced mean absolute error relative to room-temperature lookup from 7.97 to 5.23 pp (paired 95 % CI of the reduction [1.08, 4.36]) and matched the learned model without any training (5.80 pp; difference not significant). Against a conventional voltage-domain temperature-dependent OCV model built from the same two registrations, RM2P was more accurate in development (2.56 vs 1.91 pp) and [TEST3]. RM2P was most accurate between −15 and 15 °C; far below the coldest registration temperature, all methods failed.
+Battery stations for drones need the state of charge (SOC) of a returning pack within minutes of landing, at a point when coulomb-counting estimates from low-cost sensors have drifted. The rest voltage after landing is a useful observation, but the rest is short, the temperature varies, and the measurement chain is inexpensive. Temperature-dependent open-circuit-voltage (OCV) models describe the equilibrium voltage. After a few minutes of rest, especially in the cold, the terminal voltage is still far from equilibrium. Data-driven corrections learned on other cells may not transfer to new cells. We propose rest-matched two-point registration (RM2P). Each cell type is registered once at 25 °C and once at a low temperature, using rests of the same length as in the field. The field rest-end voltage is read in both monotone tables, and the two SOC readings are interpolated by ambient temperature, without extrapolation above 25 °C. RM2P has no trained parameters and takes about 1 ms per estimate. We evaluated it on five public development datasets and in three preregistered single-run tests on 23 unseen cells from three laboratories. In Test 2 (six cells, −25 to 45 °C), RM2P reduced mean absolute error relative to 25 °C lookup from 7.97 to 5.23 percentage points (pp) (cell-bootstrap 95 % CI of the reduction [1.08, 4.36]; better in 5 of 6 cells). It was statistically indistinguishable from a learned residual-correction model (5.80 pp). That learned model gained nothing over 25 °C lookup on 13 other unseen cells in Test 1, because the low-temperature rest-voltage depression is cell-specific. In post hoc analyses on Test 2, equilibrium-OCV models from Plett-style OCV tests were less accurate than RM2P, even with hysteresis-branch selection and relaxation extrapolation (best variant 6.24 pp). [TEST3: Test 3 outcome versus 25 °C lookup, the voltage-domain and equilibrium OCV models, and temperature-corrected lookup.] RM2P was most accurate between −15 and 15 °C. Far below the coldest registration temperature, all methods failed.
 
-**Index Terms:** state of charge, open-circuit voltage, rest voltage, temperature compensation, lithium-ion battery, battery station, unmanned aerial vehicle, low-cost sensing, preregistration.
+**Index Terms:** state of charge, open-circuit voltage, rest voltage, relaxation, temperature compensation, lithium-ion battery, battery station, unmanned aerial vehicle, low-cost sensing, preregistration.
 
 ## I. Introduction
 
-Battery stations that recharge or swap packs for drones must decide, shortly after each landing, how much charge a returning pack holds. That decision sets charging priority, determines whether the pack can fly the next mission, and flags packs whose capacity has faded [30, 31, 33]. Coulomb counting during flight is the usual source, but with low-cost Hall-effect current sensors its error grows with sensor offset, gain error, and capacity uncertainty [28, 29]. The rest after landing offers an independent observation: the terminal voltage relaxes toward the OCV, which maps monotonically to SOC [2, 4, 9].
+Battery stations that recharge or swap packs for drones must decide, shortly after each landing, how much charge a returning pack holds. The estimate sets charging priority, determines whether the pack can fly the next mission, and flags packs whose capacity has faded [30], [31]. Coulomb counting during flight is the usual source, but with low-cost Hall-effect current sensors its error grows with sensor offset, gain error, and capacity uncertainty [28], [29]. The rest after landing offers an independent observation: the terminal voltage relaxes toward the OCV, which maps monotonically to SOC [2], [4], [9].
 
-Three properties of this setting defeat the textbook approach of reading an equilibrium OCV table. First, the rest available before the station must act lasts minutes, whereas full relaxation takes hours, especially in the cold [12, 13]. Second, ambient temperature varies between missions, and both the OCV and the residual overpotential after a short rest depend strongly on temperature; at −20 °C, a 25 °C table underestimated SOC by 3–7 pp on the cells we studied, and by more than 50 pp on one cell at −25 °C. Third, the voltage is read through an inexpensive analog front end.
+Three properties of this setting defeat reading an equilibrium OCV table. First, the rest available before the station must act lasts minutes, whereas full relaxation takes hours, longer in the cold [7], [12], [13]. Second, the ambient temperature varies from mission to mission, and both the OCV and the residual overpotential after a short rest depend on temperature. At −20 °C a 25 °C table underestimated SOC by 3 to 7 pp on the cells we studied, and by more than 50 pp on one cell at −25 °C (Fig. 2). Third, the voltage is read through an inexpensive analog front end.
 
-Existing remedies fall into three groups. Temperature-dependent OCV models identify OCV(z, T) from slow tests at several temperatures and invert it for a measured voltage [1, 2, 7, 8, 10]; they model the equilibrium voltage, not the voltage after a short rest. Relaxation models fit the first minutes of a rest and extrapolate its asymptote [12, 13, 14, 15, 16]. Data-driven models learn SOC, or a correction to a lookup, from voltage-shape features and temperature [17, 18, 19, 20, 21]; their transfer to cells outside the training set is rarely tested under controlled conditions [22, 23, 24, 25, 26].
+Existing remedies fall into three groups:
+- **Temperature-dependent OCV models** identify OCV(z, T) from slow tests at several temperatures [1], [7], [8], [10]. They describe the equilibrium voltage.
+- **Relaxation models** fit the first minutes of a rest and extrapolate its asymptote [12]–[16].
+- **Data-driven models** learn SOC, or a correction to a lookup, from voltage-shape features and temperature [17]–[21]. Their transfer to cells outside the training set is rarely tested under controlled conditions [22]–[26].
 
-We propose rest-matched two-point registration (RM2P), which keeps estimation entirely per cell type. A one-time registration is run at 25 °C and at one low temperature, recording rests of the same length r as in the field. Each registration yields a monotone table from the rest-end voltage to SOC. In the field, the measured rest-end voltage is read in both tables, and the two SOC values are interpolated by ambient temperature in the SOC domain, without extrapolation above 25 °C. RM2P has no trained parameters.
+We propose rest-matched two-point registration (RM2P), which keeps estimation entirely per cell type. A one-time registration at 25 °C and at one low temperature records rests of the same length r as in the field. Each registration yields a monotone table from rest-end voltage to SOC. In the field, the rest-end voltage is read in both tables, and the two SOC values are interpolated by ambient temperature, without extrapolation above 25 °C. The temperature-indexed lookup structure is not new: it is the two-temperature special case of the temperature-dependent OCV–SOC tables used in the references above. What differs is that the tables are built from field-length, non-equilibrium rests rather than equilibrium OCV tests, and that only two registrations are used.
 
 Our contributions are:
-1. **RM2P**, a training-free rest-voltage SOC estimator for battery stations. It combines rest-matched registration tables (so temperature-dependent incomplete relaxation is captured, not just the equilibrium OCV), SOC-domain temperature interpolation (more robust than inverting a voltage-domain model on flat OCV segments), and an asymmetric extrapolation rule.
-2. **Evidence that the leading alternative, cross-cell learned correction, does not transfer,** with a mechanism. In a preregistered test on 13 unseen cells, a residual gradient-boosting model with a 1.3 pp development gain gave no gain over room-temperature lookup. The low-temperature rest-voltage depression is cell-specific, and leave-one-dataset-out cross-validation over similar cells did not reveal this.
-3. **Preregistered superiority tests.** RM2P beat room-temperature lookup on six unseen cells from another laboratory (Test 2), matched the learned model without training, and was compared with a conventional voltage-domain temperature-dependent OCV model, temperature-corrected lookup, and two-RC relaxation extrapolation on four further unseen cells (Test 3). Every protocol was committed before its test run.
-4. **Deployment characteristics:** sub-millisecond inference, robustness to a simulated 12-bit divider front end, and a registration procedure suited to station commissioning.
+1. **Evidence that rest-matched, non-equilibrium registration outperforms equilibrium-OCV modeling for short rests.** On Test 2 cells, equilibrium OCV(z, T) models built with Plett's OCV-test procedure were 1.0 to 7.0 pp less accurate than RM2P, even with hysteresis-branch selection and two-RC relaxation extrapolation (post hoc). [TEST3: preregistered comparison with C/20 equilibrium OCV.]
+2. **RM2P, a training-free estimator with a minimal registration budget:** two registration tests per cell type, an asymmetric extrapolation rule fixed on development data, about 1 ms per estimate, and graceful degradation under temperature-sensor bias.
+3. **A preregistered evaluation on 23 unseen cells from three laboratories.** RM2P beat 25 °C lookup in Test 2 and [TEST3]. A learned residual correction, our initial approach, had a cell-dependent gain over 25 °C lookup: none on the 13 cells of Test 1, and 2.2 pp on the six cells of Test 2. Its development gain came from the low-temperature depression of the development cells, whose magnitude did not carry over to new cells.
+4. **Analysis of why cross-cell validation overstated transfer.** The development cells happened to share similar low-temperature behavior, so leave-one-dataset-out validation could not reveal cell-to-cell variation.
 
 ## II. Related Work
 
-**Temperature-dependent OCV.** The OCV–SOC curve underlies most SOC estimators [2, 4, 9]. The OCV shifts with temperature through the entropy change of intercalation [11]. Its temperature dependence is commonly modeled as OCV(z, T) = OCV0(z) + T·OCVrel(z), identified from slow-rate tests at several temperatures, as in Plett's enhanced self-correcting (ESC) model [1, 2, 3]. Hysteresis adds a path-dependent term, important for LFP [5, 6]. These models describe the equilibrium voltage. RM2P differs in three ways: its tables describe the voltage after a rest of the field length, it interpolates in the SOC domain, and it needs only two registrations. We compare against a voltage-domain model of the ESC form built from the same two registrations (ESC2).
+**Temperature-dependent OCV.** The OCV–SOC curve underlies most SOC estimators [2], [4], [9]. The OCV shifts with temperature through the entropy change of intercalation [11]. A common model is OCV(z, T) = OCV0(z) + T·OCVrel(z), identified from slow-rate tests at several temperatures, as in Plett's enhanced self-correcting (ESC) model [1]–[3]. Hysteresis adds a path-dependent term, which is important for LFP [5], [6]. Per-cell OCV–SOC–temperature tables with interpolation across temperature have been used inside model-based estimators [8], [10], and temperature corrections of the OCV have been characterized together with aging [7]. These works describe the equilibrium voltage. RM2P describes the voltage after a rest of the field length, uses two registrations, and is used directly, without a filter. We compare it against equilibrium OCV(z, T) models built with Plett's procedure (post hoc on Test 2; preregistered in Test 3) and against a voltage-domain model of the same form built from the rest-length tables.
 
-**Rest and relaxation-based OCV estimation.** Equivalent-circuit relaxation fits extrapolate the asymptotic voltage from the first minutes of a rest; learned mappings from short rests to OCV have also been proposed [12, 13, 14, 15, 16]. We include a two-RC extrapolation baseline (B3).
+**Rest and relaxation-based OCV estimation.** Equivalent-circuit relaxation fits extrapolate the asymptotic voltage from the first minutes of a rest. Other works learn mappings from short rests to OCV, usually validated on one cell type at a few temperatures [12]–[16]. We include two-RC extrapolation (B3) as a baseline and as a front end to the equilibrium models.
 
-**Data-driven SOC estimation and generalization.** Gradient-boosted trees and neural networks estimate SOC from voltage, current, and temperature histories [17, 18, 19, 20, 21]. Transfer learning and domain adaptation target cross-cell and cross-temperature use [22, 23]. Random or within-cell splits are known to overestimate performance [24, 25, 26]. We show that even leave-one-dataset-out validation overstated transfer when the held-out cells were similar in the property that mattered.
+**Data-driven SOC estimation and generalization.** Gradient-boosted trees and neural networks estimate SOC from voltage, current, and temperature [17]–[21]. Transfer learning and domain adaptation target cross-cell and cross-temperature use, usually with target-domain data [22], [23]. Random or within-cell splits overestimate performance [24]–[26]. We show that even leave-one-dataset-out validation overstated transfer when the held-out cells were similar in the property that mattered. Cell-to-cell and type-to-type parameter variation is well documented [27].
 
 **Low-cost sensing.** Robustness to sensor offset, noise, and quantization has mostly been studied with assumed error injections [29]. We inject the gain, offset, noise, and quantization of a divider plus 12-bit ADC into every test voltage.
 
-**Drone battery stations.** Automatic battery replacement and recharging stations enable persistent multi-vehicle UAV missions and require the state of each returning pack to schedule charging and dispatch [30, 31]. SOC estimation for UAV packs has mostly used filter-based estimators during flight [33], and recent eVTOL datasets document mission-profile loads [32]. The post-landing rest, available at every station visit, has received little attention as a standalone observation.
+**Drone battery stations.** Automatic battery replacement and recharging stations enable persistent multi-vehicle UAV missions. They require the state of each returning pack to schedule charging and dispatch [30], [31]. SOC estimation for UAV packs has mostly used filter-based estimators during flight [33], and recent eVTOL datasets document mission-profile loads [32]. The post-landing rest, available at every station visit, has received little attention as a standalone observation.
 
-**Preregistration.** Committing hypotheses and analysis plans before seeing test data guards against overfitting evaluation choices [34, 35]. We are not aware of preregistered evaluations in battery-state estimation.
+**Preregistration.** Committing hypotheses and analysis plans before seeing test data guards against overfitting evaluation choices [34], [35]. To our knowledge, preregistered evaluations have not been reported in battery-state estimation.
 
 ## III. Problem Setup
 
 ### A. Task
-A sample is one rest following a discharge. The input is the first r seconds of rest voltage at 1 Hz (r = 300 s primary; 60 and 600 s secondary) and the ambient temperature T; the output is SOC. Each test cell has registration rests with known SOC at 25 °C and, for RM2P and ESC2, at one low temperature T_low. Registration samples are never scored.
+A sample is one rest that follows a discharge. The input is the first r seconds of rest voltage at 1 Hz (r = 300 s primary; 60 and 600 s secondary) and the ambient temperature T. The output is SOC. Each test cell has registration rests with known SOC at 25 °C and, for two-temperature methods, at one low temperature T_low. Registration samples are never scored.
 
 ### B. Sample definition and reference SOC
-A rest is a period of at least 300 s with |I| < I_rest = C_nom/150, preceded by a discharge (mean current over the last 60 s below −I_rest) and at least 300 s of recording. Reference SOC is 1 + Q(t)/Q25, where Q(t) is the signed charge since the most recent full-charge anchor and Q25 the cell's maximum discharged capacity at 25 °C. Samples with SOC outside (−0.02, 1.02) are dropped.
+- A rest is a period of at least 300 s with |I| < I_rest = C_nom/150. It must be preceded by a discharge (mean current over the last 60 s below −I_rest) and by at least 300 s of recording.
+- Reference SOC is 1 + Q(t)/Q25. Q(t) is the signed charge since the most recent full-charge anchor, and Q25 is the cell's maximum discharged capacity at 25 °C.
+- Samples with SOC outside (−0.02, 1.02) are dropped.
 
 ### C. Measurement-error model and temperature input
-Every test voltage passes through a simulated low-cost chain: per-sample gain error N(0, 0.2 %), offset N(0, 5 mV), white noise N(0, 2 mV), and a 6.2 mV quantization step (12-bit ADC behind a 100 kΩ/15 kΩ divider at 3.3 V). Three error seeds are used. The temperature input is the chamber's nominal temperature plus N(0, 2 °C) noise, emulating a station ambient sensor.
+Every test voltage passes through a simulated low-cost chain with three error seeds:
+- per-sample gain error N(0, 0.2 %);
+- offset N(0, 5 mV);
+- white noise N(0, 2 mV);
+- a 6.2 mV quantization step (12-bit ADC behind a 100 kΩ/15 kΩ divider at 3.3 V).
+
+The temperature input is the chamber's nominal temperature plus N(0, 2 °C) noise, emulating a station ambient sensor.
 
 ## IV. Proposed Method: RM2P
 
-**Registration.** For a cell type (ideally each pack), run two registration tests that produce rests of at least r seconds at known SOC across the SOC range: one at 25 °C and one at T_low. Pulse, GITT-type, or dynamic-profile tests all qualify; the rests should follow discharges similar to field use. From each test, form the rest-end voltage ṽ = mean of the last 15 s of the first r seconds, and fit an isotonic (monotone non-decreasing) regression g_T(ṽ) → SOC. The 15 s mean suppresses quantization and noise.
+**Registration.** For a cell type (ideally each pack), run two tests that produce rests of at least r seconds at known SOC across the SOC range: one at 25 °C and one at T_low. Pulse, GITT-type, or dynamic-profile tests all qualify. From each test, form the rest-end voltage ṽ, the mean of the last 15 s of the first r seconds, and fit an isotonic (monotone non-decreasing) regression g_T(ṽ) → SOC. The 15 s mean suppresses quantization and noise.
 
 **Estimation.** For a field rest with end voltage ṽ at ambient temperature T:
 
@@ -59,31 +70,46 @@ s25 = g_25(ṽ), s_low = g_Tlow(ṽ), w = max(0, (T − 25)/(T_low − 25)),
 
 SOC = clip(s25 + w (s_low − s25), 0, 1).
 
-Between T_low and 25 °C this is linear interpolation; below T_low it extrapolates linearly; above 25 °C it uses the 25 °C table.
+Between T_low and 25 °C this is linear interpolation. Below T_low it extrapolates linearly, and above 25 °C it uses the 25 °C table.
 
 **Design rationale.**
-- *Rest-matched tables.* After 300 s, especially in the cold, the voltage remains well below equilibrium (Fig. 4). A table built from rests of the same length absorbs this temperature-dependent overpotential; an equilibrium OCV table cannot.
-- *SOC-domain interpolation.* Interpolating two SOC readings avoids inverting an interpolated voltage curve, which amplifies errors where the OCV is flat (dV/dz small, e.g. LFP plateaus).
-- *No warm extrapolation.* Rest-voltage depression changes little above room temperature; extrapolating the 0–25 °C trend upward degraded accuracy in development (Section VI-B).
-- *Cost.* Two isotonic lookups and one interpolation: 0.5 ms per estimate on a laptop CPU.
+- *Rest-matched tables.* After 300 s, especially in the cold, the voltage remains well below equilibrium (Fig. 4), and after a discharge it sits on the lower hysteresis branch. A table built from rests of the same length after similar discharges absorbs both effects; an equilibrium OCV table does not.
+- *SOC-domain interpolation.* RM2P interpolates two SOC readings rather than two voltage curves. In development this choice made no measurable difference compared with interpolating the inverted tables in the voltage domain (Section VI-B). Its advantage appeared only on the Test 2 cells, and only post hoc, so we treat it as a convenience, not a contribution.
+- *No warm extrapolation.* Above room temperature, the rest-voltage depression changes little. Extrapolating the 0–25 °C trend upward raised the 40 °C error in development from 1.08 to 1.64 pp.
+- *Cost.* Two isotonic lookups and one interpolation; median latency 0.90 ms (P95 1.29 ms) per estimate on a laptop CPU, including table fitting.
 
-The variant was fixed on development data among four candidates (interpolation linear in T or 1/T, weight clipped to [0, 1], no warm extrapolation) and committed before any test (commit 7d4bbc5).
+The variant was fixed on development data among four candidates (interpolation linear in T or in 1/T, weight clipped to [0, 1], no warm extrapolation). It was committed before any test (commit 7d4bbc5).
 
 ## V. Compared Methods
 
-- **B0, global OCV table:** isotonic SOC vs end voltage pooled over training cells; no per-cell registration.
-- **B1, 25 °C registration lookup:** g_25(ṽ). The conventional single-temperature approach.
-- **B2, temperature-corrected lookup:** B1 + β·[1, ΔT, ΔT², ΔT·B1], ΔT = T − 25 °C, with β fitted by least squares on training cells.
+- **B0, global OCV table:** isotonic regression of SOC on end voltage, pooled over training cells; no per-cell registration.
+- **B1, 25 °C registration lookup:** g_25(ṽ), the conventional single-temperature approach.
+- **B2, temperature-corrected lookup:** B1 + β·[1, ΔT, ΔT², ΔT·B1], with ΔT = T − 25 °C and β fitted by least squares on training cells.
 - **B3, two-RC relaxation extrapolation:** the asymptote of a two-RC fit to the rest replaces ṽ in B1.
-- **B4, gradient boosting:** XGBoost predicting SOC from rest-shape features and temperature.
-- **ESC2, voltage-domain temperature-dependent OCV:** from the same two registrations, V_T(z) is obtained by isotonic regression of ṽ on SOC at 25 °C and T_low; V(z, T) = V_25(z) + a (V_Tlow(z) − V_25(z)), a = (T − 25)/(T_low − 25); SOC solves V(z, T) = ṽ. This is the ESC OCV form [1, 2] identified from two temperatures.
-- **S, learned residual correction:** XGBoost (300 trees, depth 3, learning rate 0.05, subsample 0.8, absolute-error loss, monotone in end voltage and relaxation increments) predicting SOC − B1 from the end voltage, five relaxation increments (end minus 5-point means at 4, 9, 29, 59 s and r/2), a late-relaxation ratio, the B1 SOC, and ambient temperature. It is trained with overpotential-amplitude augmentation (log-uniform factor in [0.1, 4] about a two-RC asymptote, six copies), dataset × SOC-bin weights, and a bag of five. This was our initial approach. It was selected by ablation (Section VI-A); a fuller variant P is reported as secondary.
+- **B4, gradient boosting:** XGBoost [17] predicting SOC from rest-shape features and temperature.
+- **ESC2, voltage-domain temperature-dependent OCV from rest-length tables:**
+  - V_T(z) comes from isotonic regression of ṽ on SOC at 25 °C and at T_low.
+  - V(z, T) = V_25(z) + a (V_Tlow(z) − V_25(z)), with a = (T − 25)/(T_low − 25), linear on both sides.
+  - SOC solves V(z, T) = ṽ.
+  - This is the ESC OCV form [1] identified from two temperatures. Two decomposition variants are also reported: ESC2_cold uses RM2P's warm rule, and ESC2_inv inverts RM2P's own tables, so it differs from RM2P only in the interpolation domain.
+- **Equilibrium-OCV models (ESC_eq):**
+  - OCV(z, T) is built from slow-rate OCV tests. For Plett data, we follow Plett's processOCV procedure (C/30 discharge and charge, averaged) [2], [45]. For Test 3, we use C/20 discharge pseudo-OCV.
+  - Variants: two temperatures (25 °C, T_low) or all available temperatures (OCV0 + T·OCVrel); the averaged curve or the discharge branch only; ṽ or the B3 asymptote as input; with or without RM2P's warm rule.
+- **S, learned residual correction** (our initial approach):
+  - XGBoost (300 trees, depth 3, learning rate 0.05, subsample 0.8, absolute-error loss, monotone in end voltage and relaxation increments) predicts SOC − B1.
+  - Inputs are the end voltage, five relaxation increments (end minus 5-point means at 4, 9, 29 and 59 s and at r/2), a late-relaxation ratio, the B1 SOC, and ambient temperature.
+  - Training uses overpotential-amplitude augmentation (a log-uniform factor in [0.1, 4] about a two-RC asymptote, six copies), dataset × SOC-bin weights, and a bag of five.
+  - S was selected by ablation (Section VI-A). A fuller variant P is secondary.
 
 ## VI. Experiments
 
 ### A. Development and the learned baseline
 
-**Data.** Five public datasets: LG HG2 (NMC), Panasonic 18650PF (NCA), CALCE INR20R (NMC, two cells), Samsung 30T (NMC), and Turnigy Graphene (LiPo). They cover −20 to 40 °C (CALCE: 0 and 25 °C) [8, 9, 18, 36, 37, 38, 39, 40]. Registration is each dataset's first 25 °C HPPC (CALCE: incremental OCV) test. Development folds are leave-one-dataset-out (LODO) plus temperature-extrapolation folds (train −10 to 25 °C, test −20 and 40 °C); the development metric averages the two.
+**Data.** Five public datasets: LG HG2 (NMC) [36], [37], Panasonic 18650PF (NCA) [18], [38], CALCE INR20R (NMC, two cells) [8], [9], Samsung 30T (NMC) [39], and Turnigy Graphene (LiPo) [40].
+- **Temperatures:** −20, −10, 0, 25 and 40 °C. Panasonic has no 40 °C data, and CALCE has only 0 and 25 °C.
+- **Registration:** each dataset's first 25 °C HPPC test (CALCE: incremental OCV).
+- **Folds:** leave-one-dataset-out (LODO), plus temperature-extrapolation folds (train −10 to 25 °C, test −20 and 40 °C). The development metric averages the two.
+- **CIs:** bootstrap over samples within datasets. With one cell per dataset (two for CALCE), they do not reflect cell-to-cell variation.
 
 **TABLE I. Development (MAE, pp, r = 300 s; 676 LODO + 299 extrapolation rests).**
 
@@ -97,26 +123,43 @@ The variant was fixed on development data among four candidates (interpolation l
 | P | 2.11 [1.90, 2.32] | 1.87 | 2.35 |
 | S | 2.08 [1.89, 2.27] | 1.91 | 2.24 |
 
-Ablation (increase when removed): residual on B1 +1.42, balance weights +0.28, temperature input +0.20, amplitude augmentation +0.13; other components contributed nothing, which defined S.
+**Ablation** (increase in error when a component is removed from P):
+- residual on B1: +1.42;
+- balance weights: +0.28;
+- temperature input: +0.20;
+- amplitude augmentation: +0.13.
+
+The other components contributed nothing, and removing them defined S.
 
 ### B. RM2P in development
 
-With T_low = 0 °C (each dataset's 0 °C HPPC; CALCE excluded for lack of one) and scoring at −20, −10, and 40 °C (462 LODO rests), Table II compares RM2P with the alternatives on identical samples. RM2P was best overall. It beat ESC2, built from the same registrations, by 0.65 pp [0.47, 0.86]. Extrapolating above 25 °C (the linear-in-T variant) raised the 40 °C error from 1.08 to 1.64 pp.
+**Setup.** T_low = 0 °C, using each dataset's 0 °C HPPC test; CALCE has none and is excluded. Scoring covers −20, −10 and 40 °C (462 LODO rests).
 
-**TABLE II. Development, two-temperature methods (MAE / bias, pp, r = 300 s).**
+**Results (Table II).**
+- RM2P and S were comparable: 1.91 vs 1.93 pp, not significantly different.
+- Both beat B1 (3.39 pp) and B2 (1.99 pp).
+- RM2P beat the voltage-domain model ESC2 by 0.65 pp [0.47, 0.86]. With the same warm rule (ESC2_cold) the margin was 0.45 pp [0.28, 0.65].
+- With the same tables and rule (ESC2_inv), there was no difference (1.88 pp; −0.03 [−0.07, 0.02]).
+- In development, then, the advantage over ESC2 comes from the warm rule and the regression direction, not from the interpolation domain.
 
-| Temp. | n | B1 | B2 | S | ESC2 | RM2P |
-|---|---|---|---|---|---|---|
-| All | 462 | 3.39 / −2.99 | 1.99 | 1.93 / +0.58 | 2.56 / −2.03 | **1.91** / −1.18 |
-| −20 °C | 120 | 6.57 | 3.32 | 2.54 | 4.61 | 3.20 |
-| −10 °C | 163 | 3.60 | 1.76 | 2.07 | 1.99 | 1.86 |
-| 40 °C | 179 | 1.08 | 1.29 | 1.39 | 1.70 | 1.08 |
+**TABLE II. Development, two-temperature methods (MAE / bias, pp, r = 300 s, 462 rests).**
+
+| Temp. | n | B1 | B2 | S | ESC2 | ESC2_cold | ESC2_inv | RM2P |
+|---|---|---|---|---|---|---|---|---|
+| All | 462 | 3.39 / −2.99 | 1.99 / +0.17 | 1.93 / +0.58 | 2.56 / −2.03 | 2.36 / −1.61 | 1.88 / −1.26 | 1.91 / −1.18 |
+| −20 °C | 120 | 6.57 | 3.32 | 2.54 | 4.61 | 4.61 | — | 3.20 |
+| −10 °C | 163 | 3.60 | 1.76 | 2.07 | 1.99 | 1.99 | — | 1.86 |
+| 40 °C | 179 | 1.08 | 1.29 | 1.39 | 1.70 | 1.19 | — | 1.08 |
 
 ### C. Test 1 (preregistered): does the learned correction transfer?
 
-Before RM2P existed, we froze S and tested it on LG E66 (one 65 Ah pouch cell; −20 to 40 °C) [41, 42] and Molicel P42A (12 cells; 5 and 40 °C) [43, 44]. The protocol was committed as 14c47ae, the conversion as d77e5e5, and the runner as 82f5722, all before the single run. Hypotheses: H1, S < B1; H2, S < B2.
+Before RM2P existed, we froze S and tested it on LG E66 [41], [42] and Molicel P42A [43], [44].
+- **Cells:** E66 is one 65 Ah pouch cell tested at −20, −10, 0, 10 and 40 °C. P42A is 12 cells tested at 5 and 40 °C.
+- **Preregistration:** protocol 14c47ae, conversion d77e5e5 and runner 82f5722 were all committed before the single run.
+- **Registration:** E66's 25 °C GITT test; each P42A cell's 25 °C HCGT test.
+- **Hypotheses:** H1, S < B1; H2, S < B2.
 
-**TABLE III. Test 1 (MAE, pp, r = 300 s; CI over cells for P42A, samples for E66).**
+**TABLE III. Test 1 (MAE, pp, r = 300 s; CI over cells for P42A, over samples for E66).**
 
 | Method | E66 (794 rests) | P42A (571 rests, 12 cells) | Mean |
 |---|---|---|---|
@@ -125,13 +168,29 @@ Before RM2P existed, we froze S and tested it on LG E66 (one 65 Ah pouch cell; �
 | B2 | 1.793 [1.69, 1.89] | 1.143 [1.08, 1.21] | 1.468 |
 | P | 1.719 [1.63, 1.81] | 1.161 [1.11, 1.22] | 1.440 |
 
-Neither H1 (B1 − S: −0.04 [−0.15, 0.08] on E66; −0.01 [−0.14, 0.11] on P42A) nor H2 was supported.
+**Outcome.** Neither H1 nor H2 was supported. B1 − S was −0.04 [−0.15, 0.08] on E66 and −0.01 [−0.14, 0.11] on P42A.
 
-**Mechanism (Fig. 2).** On development cells, B1's bias grew with cold: −6.57 pp at −20 °C, −3.58 at −10 °C, −1.99 at 0 °C, −0.05 at 40 °C. The three development datasets measured at −20 °C with more than five rests clustered between −6.1 and −6.9 pp. E66's depression was half as large (−3.31 pp), so S, which had learned the development magnitude, overcorrected (+3.23 pp). A same-temperature oracle table cut B1 from 3.0–4.1 to 1.0–1.4 pp per dataset, while rebuilding the table from all 25 °C rests changed nothing, so registration quality was not the cause. Other candidate causes failed to explain the gap: the extrapolation folds, the preceding current, and the test type. The depression is a per-cell property, and only a per-cell measurement captures it. This motivated RM2P. Applied post hoc to E66 with its 0 °C GITT registration, RM2P reduced MAE to 1.34 pp (S 1.81, B1 1.86; 0 °C rests excluded), and the −20 °C bias to −0.16 pp.
+**Mechanism (Fig. 2).**
+- On development cells, B1's bias grew with cold: −6.57 pp at −20 °C, −3.58 at −10 °C, −1.99 at 0 °C, and −0.05 at 40 °C.
+- The three development datasets with more than five rests at −20 °C clustered between −6.1 and −6.9 pp.
+- E66's depression was half as large (−3.31 pp), so S, which had learned the development magnitude, overcorrected (+3.23 pp).
+- A same-temperature oracle table cut per-dataset B1 error from 2.3–4.1 to 1.0–1.4 pp. Rebuilding the table from all 25 °C rests left it unchanged, so registration quality was not the cause.
+- Three other candidate explanations did not account for the gap: the extrapolation folds, the preceding current, and the test type.
+
+The depression is a per-cell property, which motivated RM2P. Applied post hoc to E66 with its 0 °C GITT registration (0 °C rests excluded), RM2P reduced MAE to 1.34 pp, against 1.81 for S and 1.86 for B1, and reduced the −20 °C bias to −0.16 pp.
 
 ### D. Test 2 (preregistered): RM2P on unseen cells
 
-**Data.** Plett ESC toolbox dynamic tests [2, 45]: six cells (A123, ATL, E1, E2, P14, SAM; 2.1–19.4 Ah, including two with LFP-like flat OCV curves), eight temperatures from −25 to 45 °C, with rests of about 12 min after dynamic-profile segments peaking at 0.5–4.9 C. Registration used each cell's 25 °C and −5 °C tests (T_low = the temperature closest to 0 °C, ties toward colder). Scoring used 658 rests at the other six temperatures. The protocol, conversion, and runner were committed as cd29142 before the single run. Hypotheses: H3, RM2P < S; H4, RM2P < B1 (paired cell-level bootstrap, six cells, B = 2000; supported if the lower bound of the paired difference exceeds 0).
+**Data.** Plett ESC toolbox dynamic tests [2], [45] (CC BY-NC-SA 4.0).
+- **Cells:** six cells (A123, ATL, E1, E2, P14, SAM), 2.1 to 19.4 Ah, including two with LFP-like flat OCV curves.
+- **Temperatures:** eight, from −25 to 45 °C.
+- **Rests:** about 12 min each, following dynamic-profile segments that peak at 0.5 to 4.9 C.
+
+**Design.** Protocol, conversion and runner were committed as cd29142 before the single run.
+- **Registration:** each cell's 25 °C and −5 °C tests.
+- **Scoring:** 658 rests at the other six temperatures.
+- **Hypotheses:** H3, RM2P < S; H4, RM2P < B1.
+- **Inference:** paired cell-level bootstrap (B = 2000). A hypothesis is supported if the lower bound of the paired difference exceeds 0.
 
 **TABLE IV. Test 2 (MAE, pp, r = 300 s).**
 
@@ -143,46 +202,88 @@ Neither H1 (B1 − S: −0.04 [−0.15, 0.08] on E66; −0.01 [−0.14, 0.11] on
 | B2 | 6.27 [3.53, 9.53] | +1.04 [−0.02, 2.25] | 14.86 | 10.22 | 3.84 | 2.58 | 1.90 | 2.63 |
 | P | 5.80 [3.20, 9.09] | +0.57 [−0.30, 1.62] | 14.04 | 9.08 | 3.37 | 2.31 | 2.17 | 2.35 |
 
-**H4 was supported; H3 was not.** RM2P was the most accurate method from −15 to 15 °C. At −25 °C, 20 °C below T_low, linear extrapolation under-corrected and every method failed. Absolute errors were higher than in Test 1 because of the −25 °C condition and the flat-OCV cells (ATL B1 bias −56 pp at −25 °C, Fig. 2c). Post hoc, on the same samples, ESC2 reached 6.04 pp (RM2P better by 0.81 [0.55, 1.08]).
+**Outcome.** H4 was supported; H3 was not.
+
+**Cell-level robustness (post hoc).**
+- RM2P beat B1 in 5 of 6 cells (SAM: 2.90 vs 2.68 pp). The exact sign test gives p = 0.22, and the sign-flip permutation test over cells p = 0.06.
+- With six cells, the percentile cell bootstrap is anti-conservative, so the preregistered H4 result should be read together with these tests.
+- RM2P beat S in 3 of 6 cells (permutation p = 0.41).
+
+**By temperature.**
+- RM2P was the most accurate method from −15 to 15 °C.
+- At −25 °C, 20 °C below T_low, linear extrapolation under-corrected and every method failed.
+- Errors were higher than in Test 1 because of the −25 °C condition and the flat-OCV cells. The ATL cell's B1 bias was −56 pp at −25 °C (Fig. 2c).
+
+**Post hoc comparison with conventional OCV models (Table V).** On the same samples, equilibrium-OCV models built from Plett's OCV tests were much less accurate than RM2P.
+- The two-temperature averaged-curve model reached 12.22 pp, and the full eight-temperature OCV0 + T·OCVrel model 12.25 pp. The full model knows the equilibrium OCV at every scored temperature.
+- Their bias was negative at every temperature, including 35 and 45 °C (−5 to −6 pp). The rest voltage after a discharge stays below the averaged OCV curve, through residual overpotential and hysteresis.
+- Giving the equilibrium model RM2P's advantages narrowed the gap but did not close it. With the discharge branch only, the B3 asymptote and RM2P's warm rule, it reached 6.24 pp; RM2P was better by 1.01 pp and won in 5 of 6 cells.
+- The voltage-domain models built from the rest-length tables also trailed RM2P: ESC2 6.04, ESC2_cold 5.85, ESC2_inv 6.35 pp.
+
+**TABLE V. Post hoc, Test 2 samples: OCV-model baselines (MAE, pp, r = 300 s).**
+
+| Method | All | −25 | −15 | 5 | 15 | 35 | 45 °C | Cells where RM2P better |
+|---|---|---|---|---|---|---|---|---|
+| RM2P | 5.23 | 15.34 | 6.64 | 1.94 | 1.88 | 1.84 | 2.14 | — |
+| ESC_eq, 2 temps, averaged curve | 12.22 | 23.72 | 18.53 | 8.98 | 7.41 | 5.83 | 6.56 | 5/6 |
+| ESC_eq, 8 temps, averaged curve | 12.25 | 24.21 | 18.98 | 9.17 | 7.40 | 5.44 | 5.89 | 5/6 |
+| ESC_eq, 2 temps, discharge branch | 9.61 | 19.22 | 10.43 | 3.11 | 2.90 | 9.71 | 11.37 | 5/6 |
+| … + B3 asymptote + warm rule | 6.24 | 16.13 | 7.95 | 2.86 | 2.81 | 2.83 | 3.29 | 5/6 |
+| ESC2 (rest-length tables) | 6.04 | 15.30 | 6.79 | 3.07 | 2.43 | 2.59 | 4.68 | — |
+| ESC2_inv (RM2P tables, voltage domain) | 6.35 | — | — | — | — | — | — | — |
 
 ### E. Test 3 (preregistered): RM2P vs conventional methods [TEST3]
 
-**Data.** Tesla Model 3 2170 (Panasonic NCA, three cells) [46] and SB LiMotive (one cell) [47], from McMaster University: HPPC tests at −20, −10, 0, 10, 25, and 40 °C. Registration used 25 °C and 0 °C HPPC; scoring used all rests at −20, −10, 10, and 40 °C. Hypotheses: H5 RM2P < B1, H6 RM2P < ESC2, H7 RM2P < B2. Inference uses a paired bootstrap over (cell, temperature) clusters with Holm correction. B3 and S are reported without hypotheses; S is fair only where the rest's first 60 s are truly logged at 1 s.
+**Data.** McMaster Tesla Model 3 2170 (Panasonic NCA, three cells; CC BY 4.0) [46] and SB LiMotive (one cell; CC BY-SA 4.0) [47], with HPPC tests at −20, −10, 0, 10, 25 and 40 °C.
+
+**Design.**
+- **Registration:** 25 °C and 0 °C HPPC.
+- **Scoring:** all rests at −20, −10, 10 and 40 °C.
+- **Primary hypotheses:** H5, RM2P < B1; H6, RM2P < ESC2; H7, RM2P < B2; H8, RM2P < ESC_eq (C/20, two temperatures). Inference is a paired bootstrap over (cell, temperature) clusters with Holm correction.
+- **Amendment (committed before any test-data run, 7eb6e9e):** added H8, the ESC decomposition variants, prespecified subsets (below T_low, interpolation, above 25 °C), per-cell-type reporting with sign consistency, and type-level registration (leave-one-cell-out among the Tesla cells).
+- **Scope:** inference is conditional on these two cell types. Tesla rests were logged every 60 s in the raw data, so B3 and S are compared only on the 1 s-logged SB rests.
 
 [TEST3 table and outcomes]
 
-### F. Rest length, computation, and more registration points
+### F. Sensitivity analyses (post hoc)
 
-RM2P's error fell with rest length (Test 2: 6.26, 5.23, and 4.65 pp at r = 60, 300, and 600 s). Median latency was 0.5 ms (RM2P, B1), 2.3 ms (S), and 4.4 ms (P); the worst case for S was 42 ms. Post hoc, registering every available temperature except the test temperature reduced Test 2 MAE to 3.19 pp, including 7.41 at −25 °C. A third registration near the coldest operating temperature is therefore the natural extension where cold operation is expected.
+- **Measurement chain.** Removing the simulated front-end errors improved RM2P by 0.12 pp in development (1.79 vs 1.91) and by 0.36 pp on Test 2 (4.87 vs 5.23). The low-cost chain costs little relative to the temperature effects.
+- **Temperature-sensor bias.** A pack is warmer than ambient after flight. With a +10 °C bias added to the temperature input on Test 2, RM2P rose from 5.23 to 5.81 pp, B2 from 6.27 to 7.17, and S from 5.80 to 6.03. With −5 °C, RM2P was 5.26.
+- **Load history.** In development, the registration tables come from HPPC tests. Scored rests that followed drive cycles or constant-current discharges were harder for every method: RM2P 3.89 and 3.98 pp, against 1.36 for HPPC rests. RM2P still improved on B1 by 1.4 to 1.5 pp in each group.
+- **Rest length.** On Test 2, RM2P's error fell with rest length: 6.26, 5.23 and 4.65 pp at r = 60, 300 and 600 s.
+- **More registration temperatures.** Registering every available temperature except the test temperature reduced Test 2 MAE to 3.19 pp, including 7.41 at −25 °C. Where cold operation is expected, the natural extension is a third registration near the coldest operating temperature.
+- **Latency.** RM2P 0.90 ms median; S 2.3 ms; P 4.4 ms (worst case for S: 42 ms).
 
 ## VII. Discussion
 
-**Why per-cell registration beats cross-cell learning here.** The quantity that matters most, the rest-voltage depression at low temperature, varies between cells by a factor of two or more (Fig. 2), consistent with known cell-to-cell and type-to-type variation in battery parameters [27]. A learned model can only reproduce the average of its training cells. A single low-temperature registration measures the cell's own value. Leave-one-dataset-out validation did not expose the problem because the development cells happened to be similar; validation must vary the property that drives generalization.
+**Why rest-matched tables beat equilibrium OCV models.** The quantity a station sees is a voltage after a few minutes of rest following a discharge. That voltage differs from the equilibrium OCV through residual overpotential, which grows in the cold, and through hysteresis. The equilibrium models in Table V carried a negative bias at every temperature. Relaxation extrapolation and branch selection removed only part of it. Registering with the same kind of rest as in the field captures these effects without modeling them.
 
-**Why SOC-domain interpolation beats voltage-domain models.** ESC2 interpolates voltage curves and then inverts them. Where the curve is flat, small voltage errors produce large SOC errors, and quantization makes this worse. RM2P interpolates two already-inverted readings, so the flat-region error is not compounded.
+**Why per-cell registration beats cross-cell learning here.** The low-temperature depression varies between cells by a factor of two or more (Fig. 2), consistent with documented cell-to-cell and type-to-type parameter variation [27]. A learned model reproduces the average of its training cells, which helped on the Test 2 cells and hurt on E66. A single low-temperature registration measures each cell's own value. Leave-one-dataset-out validation did not expose this because the development cells happened to be similar. Validation must vary the property that drives generalization.
 
-**Station practice.** RM2P fits station commissioning: register each new pack type at 25 °C and at the coldest planned operating temperature, using the same rest length as in operation. The station then needs only an ambient sensor and two lookups per landing.
+**Station practice.** RM2P fits station commissioning. Register each new pack type at 25 °C and at the coldest planned operating temperature, using the same rest length and a discharge similar to operation. The station then needs only an ambient sensor and two table lookups per landing. Whether one registration per pack type suffices, or each pack needs its own, is examined in Test 3 [TEST3].
 
 ## VIII. Limitations
 
-- No real drone pack or flight-load data were available. Test rests follow constant-current, pulse, or dynamic-profile discharges, and Plett's dynamic profiles are not flight profiles.
-- RM2P extrapolates poorly far below T_low (−25 °C in Test 2).
-- Development data have one cell per dataset (two for CALCE), and E66 comes from the same laboratory as some development data.
-- Test 2 has six cells, so its cell-level CIs are wide. The Plett ESC data carry no explicit license and are cited without redistribution.
-- S was selected after an ablation, and RM2P's variant on development data; both were frozen before their tests. The E66 and dense-registration analyses are post hoc.
-- Reference SOC uses the 25 °C capacity. The deliverable capacity in the cold is smaller; this does not affect the comparison between methods.
+- **Loads.** No real drone pack or flight-load data were available. Test rests follow constant-current, pulse or dynamic-profile discharges; Plett's dynamic profiles are not flight profiles.
+- **Far extrapolation.** RM2P extrapolates poorly far below T_low (−25 °C in Test 2).
+- **Small cell counts.** Development has one cell per dataset (two for CALCE), and its CIs ignore cell-to-cell variation. E66 comes from the same laboratory as some development data. Test 2 has six cells, and its percentile cell bootstrap is anti-conservative (Section VI-D). Test 3 covers two cell types.
+- **Selection on development data.** S was selected by ablation, and RM2P's variant was chosen on development data. Both were frozen before their tests.
+- **Post hoc analyses.** The E66 analysis, the OCV-model comparisons on Test 2, and the sensitivity analyses are post hoc.
+- **Reference SOC.** It uses the 25 °C capacity. The deliverable capacity in the cold is smaller, which does not affect the comparison between methods.
 
 ## IX. Conclusion
 
-RM2P estimates SOC from a short post-landing rest using two per-cell registrations and no training. In preregistered tests on unseen cells, it improved on conventional room-temperature OCV lookup and matched a learned correction model that itself failed to transfer to new cells, and [TEST3]. The low-temperature rest-voltage depression is cell-specific; measuring it per cell, rather than learning it from other cells, is the effective and inexpensive way to handle it.
+RM2P estimates SOC from a short post-landing rest using two per-cell registrations and no training. Its tables are built from field-length rests, not equilibrium OCV tests. In preregistered tests on unseen cells it improved on conventional 25 °C OCV lookup, [TEST3], and was statistically indistinguishable from a learned correction model whose benefit varied between cell sets. In post hoc comparisons, it outperformed equilibrium OCV(z, T) models even when those were given hysteresis-branch selection and relaxation extrapolation. The low-temperature rest-voltage depression is cell-specific. Measuring it per cell, with rests like those seen in the field, is an effective and inexpensive way to handle it.
 
 ## Data and Code Availability
-Datasets as cited. Code, protocols, and per-sample predictions are in the project repository. Protocol commits: Test 1 14c47ae (protocol), d77e5e5 (conversion), 82f5722 (runner); Test 2 cd29142; Test 3 [TEST3]. TODO: public URL.
+- **Datasets:** as cited, under their licenses: CC BY 4.0 for the Mendeley, Borealis, Tesla and OSF datasets unless noted; CC BY-SA 4.0 for SB LiMotive; CC BY-NC-SA 4.0 for Plett ESC. No data are redistributed.
+- **Code and protocols:** code, protocols and per-sample predictions are in the project repository. Protocol commits: Test 1 14c47ae (protocol), d77e5e5 (conversion), 82f5722 (runner); Test 2 cd29142; Test 3 f7fe7a6 (draft), 7eb6e9e (amendment), [TEST3] (final). [Public repository URL to be added before submission.]
+- **Software:** Python 3.11.9, NumPy 2.4.6, SciPy 1.16.3, scikit-learn 1.9.0, XGBoost 3.2.0, pandas 2.3.3.
 
 ## Figures
-- Fig. 1: Study design (`paper/figs/fig_design.png`). TODO: add Test 3 box.
-- Fig. 2: Bias of 25 °C lookup vs temperature per cell (`fig_bias_vs_temp.png`); points with fewer than five rests omitted.
-- Fig. 3: MAE vs temperature, (a) E66 post hoc, (b) Test 2 (`fig_mae_vs_temp.png`). TODO: add ESC2.
+- Fig. 1: Study design (`paper/figs/fig_design.png`).
+- Fig. 2: Bias of 25 °C lookup vs temperature per cell; (a) development, (b) Test 1, (c) Test 2 (`fig_bias_vs_temp.png`). Points with fewer than five rests are omitted.
+- Fig. 3: MAE vs temperature for B1, B2, S, ESC2 and RM2P; (a) E66, post hoc; (b) Test 2, with ESC2 post hoc (`fig_mae_vs_temp.png`).
 - Fig. 4: Rest-voltage traces at eight temperatures near SOC 0.5, Plett cell E2 (`fig_rest_curves.png`).
 
 ## References

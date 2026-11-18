@@ -13,6 +13,14 @@
 
 주장의 중심을 "새 방법이 이긴다"에서 **"무엇이 일반화되고 무엇이 안 되는가를 사전 등록 시험으로 보인 벤치마크"**로 옮긴다.
 
+## 0-1. 2점 등록 확증 결과 반영 (11-18)
+- 확증 시험(Plett ESC 6셀, `final3_results.md`): T2_cold 5.23, S_simple 5.80, B1 7.97.
+  - H4(< B1) 지지. H3(< 학습 보정) 지지 안 됨.
+  - T2_cold는 −15 ~ 15 °C에서 가장 나았다. −25 °C에서는 모든 방법이 14 %p를 넘었다.
+- 논문 기여 3 뒤에 **"학습 없는 2점 등록: 단순 조회보다 확실히 낫고, 학습 보정과 같거나 낫다(확증 + 사후)"**를 추가한다.
+- 6.3 뒤에 6.4 "2점 등록(dev, E66 사후, Plett 확증)"을 넣는다.
+- 한계: Plett 데이터는 라이선스 표기가 없고, −25 °C는 아무 방법도 풀지 못했다.
+
 ## 1. 제목 후보
 1. Rest-voltage state-of-charge estimation for drone battery stations: a preregistered cross-cell evaluation
 2. How far can a single room-temperature registration test go? Rest-voltage SOC estimation on unseen Li-ion cells

@@ -72,7 +72,7 @@ def tab_of(V, soc, ln, m):
 def run_dev(r):
     X, meta = bench.data()
     REG = ev.reg_mask(meta)
-    E, Tall = {"B1": [], "T2_cold": [], "TN_loto": []}, []
+    E, Tall = {}, []
     for fold in ev.FOLDS:
         d = meta["dataset"] == fold
         temps = sorted({float(t) for t in meta["temp_c"][d]})
@@ -86,8 +86,8 @@ def run_dev(r):
         sel = d & (meta["temp_c"] != ev.REF_T) & (meta["rest_len"] >= r)  # bench IN 폴드와 같은 선택(잡음 같게)
         e = evaluate(X["rest_V"][sel], meta["soc"][sel], meta["temp_c"][sel].astype(float), tables, 0.0, r, None)
         keep = meta["temp_c"][sel] != 0
-        for k in E:
-            E[k].append(e[k][keep])
+        for k in e:
+            E.setdefault(k, []).append(e[k][keep])
         Tall.append(meta["temp_c"][sel][keep])
     return {k: np.concatenate(v) for k, v in E.items()}, np.concatenate(Tall)
 
@@ -111,7 +111,7 @@ def run_e66(r):
 def run_plett(r):
     z = np.load("C:/BMS/data/holdout_final3/rest_final3.npz", allow_pickle=False)
     m, V = z["meta"], z["rest_V"]
-    E, Tall = {"B1": [], "T2_cold": [], "TN_loto": []}, []
+    E, Tall = {}, []
     for c in sorted(set(m["cell"].tolist())):
         kc = m["cell"] == c
         tables = {}
@@ -121,8 +121,8 @@ def run_plett(r):
                 tables[t] = tab_of(V, m["soc"], m["rest_len"], mm)
         sel = kc & ~m["is_reg"] & ~m["is_reg2"] & (m["temp_c"] != 25) & (m["temp_c"] != -5) & (m["rest_len"] >= r)
         e = evaluate(V[sel], m["soc"][sel], m["temp_c"][sel].astype(float), tables, -5.0, r, None)
-        for k in E:
-            E[k].append(e[k])
+        for k in e:
+            E.setdefault(k, []).append(e[k])
         Tall.append(m["temp_c"][sel])
     return {k: np.concatenate(v) for k, v in E.items()}, np.concatenate(Tall)
 

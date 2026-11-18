@@ -5,3 +5,6 @@ __pycache__/
 .claude/settings.local.json
 STOP
 analysis/tmp/
+
+# 원고는 투고 후 공개
+paper/

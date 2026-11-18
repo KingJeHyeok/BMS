@@ -84,7 +84,7 @@ def fig_bias():
         ax.set_title(title, fontsize=8, color=INK, loc="left")
         ax.set_xlabel("Temperature (°C)")
         ax.legend(loc="lower right", handlelength=1.2)
-    axs[0].set_ylabel("Bias of 25 °C lookup (B1), %p")
+    axs[0].set_ylabel("Bias of 25 °C lookup (B1), pp")
     fig.tight_layout()
     fig.savefig(os.path.join(OUT, "fig_bias_vs_temp.png"), dpi=300)
     plt.close(fig)
@@ -123,18 +123,25 @@ def plett_methods():
 
 
 def fig_methods():
+    import esc_compare  # noqa: F401  (multi_reg.evaluate를 ESC2 포함 버전으로 바꾼다)
+    import multi_reg as mr
     fig, axs = plt.subplots(1, 2, figsize=(7.16, 2.6), sharey=False)
     lab = {"B1": "B1: 25 °C lookup", "B2": "B2: B1 + linear temp. corr.", "S_simple": "Learned residual (S)",
-           "T2_cold": "Two-point lookup (T2)"}
-    col = {"B1": CAT[1], "B2": CAT[3], "S_simple": CAT[0], "T2_cold": CAT[2]}
-    for ax, (title, (E, T)) in zip(axs, [("(a) LG E66, post hoc (0 °C excluded)", e66_methods()),
-                                          ("(b) Plett ESC, preregistered Test 2", plett_methods())]):
+           "ESC2": "ESC2: voltage-domain OCV(z,T)", "T2_cold": "RM2P (proposed)"}
+    col = {"B1": CAT[1], "B2": CAT[3], "S_simple": CAT[0], "ESC2": CAT[6], "T2_cold": CAT[2]}
+    for ax, (title, (E, T), run) in zip(axs, [("(a) LG E66, post hoc (0 °C excluded)", e66_methods(), mr.run_e66),
+                                               ("(b) Plett ESC, preregistered Test 2 (ESC2 post hoc)", plett_methods(), mr.run_plett)]):
+        Ee, Te = run(R)
         ts = np.unique(T)
-        for k in ["B1", "B2", "S_simple", "T2_cold"]:
-            ax.plot(ts, [E[k][T == t].mean() for t in ts], "-o", color=col[k], ms=3.5, label=lab[k], mec="white", mew=0.6)
+        for k in ["B1", "B2", "S_simple", "ESC2", "T2_cold"]:
+            if k == "ESC2":
+                y = [np.abs(Ee["ESC2"][Te == t]).mean() for t in ts]
+            else:
+                y = [E[k][T == t].mean() for t in ts]
+            ax.plot(ts, y, "-o", color=col[k], ms=3.5, label=lab[k], mec="white", mew=0.6, lw=2.2 if k == "T2_cold" else 1.4)
         ax.set_title(title, fontsize=8, color=INK, loc="left")
         ax.set_xlabel("Temperature (°C)")
-        ax.set_ylabel("MAE, %p (r = 300 s)")
+        ax.set_ylabel("MAE, pp (r = 300 s)")
         ax.set_ylim(bottom=0)
     axs[1].legend(loc="upper right", handlelength=1.2)
     fig.tight_layout()
